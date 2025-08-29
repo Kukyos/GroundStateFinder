@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "pluggy-1.5.0-py313h06a4308_0.conda",
+  "license": "MIT",
+  "license_family": "MIT",
+  "md5": "ea142d52281afe8e9a79e4a33c023e41",
+  "name": "pluggy",
+  "platform": "linux",
+  "sha256": "35cd1745a62ee403a07b0cc9a6cea548bcc539f8076ddce33aa8630c529eac6a",
+  "size": 47336,
+  "subdir": "linux-64",
+  "timestamp": 1733169630000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/pluggy-1.5.0-py313h06a4308_0.conda",
+  "version": "1.5.0"
+}

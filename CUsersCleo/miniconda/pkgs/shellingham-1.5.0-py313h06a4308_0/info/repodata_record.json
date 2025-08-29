@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "shellingham-1.5.0-py313h06a4308_0.conda",
+  "license": "ISC",
+  "license_family": "OTHER",
+  "md5": "fec77e08b241c9bae71940db00e14b65",
+  "name": "shellingham",
+  "platform": "linux",
+  "sha256": "ffe3837d6dcdca6cbbc78e6d9c2489801ff7a0f94804a5827962e8524e17c112",
+  "size": 20962,
+  "subdir": "linux-64",
+  "timestamp": 1728395325000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/shellingham-1.5.0-py313h06a4308_0.conda",
+  "version": "1.5.0"
+}

@@ -51,9 +51,49 @@ def build_molecule_qubit_hamiltonian(molecule: str = "NH3", force_precomputed: b
                 spin=spin,
                 unit=DistanceUnit.ANGSTROM,
             )
-            problem = ElectronicStructureProblem(driver)
+            # The driver must be run to produce a DriverResult which
+            # provides the attributes expected by ElectronicStructureProblem.
+            result = driver.run()
+            # Some qiskit-nature versions have driver.run() return a
+            # DriverResult, while others (installed in some conda builds)
+            # may already return an ElectronicStructureProblem. Handle both.
+            if isinstance(result, ElectronicStructureProblem):
+                problem = result
+            else:
+                problem = ElectronicStructureProblem(result)
             second_q_ops = problem.second_q_ops()
-            hamiltonian = second_q_ops["ElectronicEnergy"]
+            # second_q_ops can be a dict (name->op) or a tuple/list
+            # (main_op, aux_ops_dict, ...). Handle both shapes robustly.
+            hamiltonian = None
+            # Prefer dict access when available
+            if isinstance(second_q_ops, dict):
+                hamiltonian = second_q_ops.get("ElectronicEnergy")
+
+            # If it's a sequence, try common patterns
+            if hamiltonian is None and isinstance(second_q_ops, (tuple, list)):
+                # often: (main_op, aux_ops_dict)
+                for el in second_q_ops:
+                    if isinstance(el, dict) and "ElectronicEnergy" in el:
+                        hamiltonian = el["ElectronicEnergy"]
+                        break
+                # fallback: first FermionicOp element is usually the electronic hamiltonian
+                if hamiltonian is None:
+                    try:
+                        from qiskit_nature.second_q.operators.fermionic_op import FermionicOp
+                        for el in second_q_ops:
+                            if isinstance(el, FermionicOp):
+                                hamiltonian = el
+                                break
+                    except Exception:
+                        # cannot import FermionicOp; ignore and continue
+                        pass
+
+            if hamiltonian is None:
+                # As a last resort, try dict-like access by string key
+                try:
+                    hamiltonian = second_q_ops["ElectronicEnergy"]
+                except Exception:
+                    raise RuntimeError("Could not extract ElectronicEnergy from second_q_ops() result")
             # Map using Jordan-Wigner
             mapper = JordanWignerMapper()
             return mapper.map(hamiltonian)

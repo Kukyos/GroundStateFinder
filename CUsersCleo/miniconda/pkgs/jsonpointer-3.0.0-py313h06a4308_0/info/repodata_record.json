@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "jsonpointer-3.0.0-py313h06a4308_0.conda",
+  "license": "BSD-3-Clause",
+  "license_family": "BSD",
+  "md5": "af07fefbc353b9e3292ad9e0d563d9be",
+  "name": "jsonpointer",
+  "platform": "linux",
+  "sha256": "14c58942969c5d6dfc0647894dbdbe5d13fb354b6f1585f9010c3da13e428fea",
+  "size": 21361,
+  "subdir": "linux-64",
+  "timestamp": 1753788560000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/jsonpointer-3.0.0-py313h06a4308_0.conda",
+  "version": "3.0.0"
+}

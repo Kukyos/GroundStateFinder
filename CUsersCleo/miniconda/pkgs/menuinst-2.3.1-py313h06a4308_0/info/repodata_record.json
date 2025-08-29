@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "menuinst-2.3.1-py313h06a4308_0.conda",
+  "license": "BSD-3-Clause AND MIT",
+  "license_family": "BSD",
+  "md5": "215cd4c223b3ab647d025f347d35c058",
+  "name": "menuinst",
+  "platform": "linux",
+  "sha256": "5a8164e2c4362ea3f5d1bef27369af7bccf7e0dbc471b5e3882db302dde5aaa3",
+  "size": 269342,
+  "subdir": "linux-64",
+  "timestamp": 1753464615000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/menuinst-2.3.1-py313h06a4308_0.conda",
+  "version": "2.3.1"
+}

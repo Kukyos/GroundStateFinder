@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "hdb19cb5_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "libgcc-ng >=11.2.0",
+    "libstdcxx-ng >=11.2.0"
+  ],
+  "fn": "cpp-expected-1.1.0-hdb19cb5_0.conda",
+  "license": "CC0-1.0",
+  "license_family": "CC",
+  "md5": "3a195bcf47b691adb4a635a8b7f396f7",
+  "name": "cpp-expected",
+  "platform": "linux",
+  "sha256": "8718137ba3afc2eb8eb986e17442968aec45b32bbd746b64bc239c3019ec7216",
+  "size": 132687,
+  "subdir": "linux-64",
+  "timestamp": 1734039334000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/cpp-expected-1.1.0-hdb19cb5_0.conda",
+  "version": "1.1.0"
+}

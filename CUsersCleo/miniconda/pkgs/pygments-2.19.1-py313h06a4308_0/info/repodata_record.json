@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "pygments-2.19.1-py313h06a4308_0.conda",
+  "license": "BSD-2-Clause",
+  "license_family": "BSD",
+  "md5": "8fcbba71964f3d4d936e846c3bc9fb13",
+  "name": "pygments",
+  "platform": "linux",
+  "sha256": "f149f57127cdb144cd81285e98451455ff139b9d5d80f986281a8ec55ba16849",
+  "size": 2287169,
+  "subdir": "linux-64",
+  "timestamp": 1744664137000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/pygments-2.19.1-py313h06a4308_0.conda",
+  "version": "2.19.1"
+}

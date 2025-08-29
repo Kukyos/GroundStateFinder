@@ -1,0 +1,25 @@
+{
+  "arch": "x86_64",
+  "build": "hfdd30dd_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "icu >=73.1,<74.0a0",
+    "libgcc-ng >=11.2.0",
+    "xz >=5.6.4,<6.0a0",
+    "zlib >=1.2.13,<1.3.0a0"
+  ],
+  "fn": "libxml2-2.13.8-hfdd30dd_0.conda",
+  "license": "MIT",
+  "license_family": "MIT",
+  "md5": "6da89b526f12f128af101c3f70d12c6d",
+  "name": "libxml2",
+  "platform": "linux",
+  "sha256": "993222ef0219e1c44ef52f67731e504926b405c9fe5cfb21197c3739b336beae",
+  "size": 756964,
+  "subdir": "linux-64",
+  "timestamp": 1745948067000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/libxml2-2.13.8-hfdd30dd_0.conda",
+  "version": "2.13.8"
+}
