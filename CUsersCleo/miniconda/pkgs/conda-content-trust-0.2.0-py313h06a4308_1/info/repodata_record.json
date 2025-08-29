@@ -1,0 +1,24 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_1",
+  "build_number": 1,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "cryptography >=41",
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "conda-content-trust-0.2.0-py313h06a4308_1.conda",
+  "license": "BSD-3-Clause",
+  "license_family": "BSD",
+  "md5": "aefc551e21e13ecc1de44ee589aea77d",
+  "name": "conda-content-trust",
+  "platform": "linux",
+  "sha256": "4a9f6f94219e6e603a7e69beb3a391096a1cf9aec249e100f30dce3eac7a233e",
+  "size": 62054,
+  "subdir": "linux-64",
+  "timestamp": 1728487079000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/conda-content-trust-0.2.0-py313h06a4308_1.conda",
+  "version": "0.2.0"
+}

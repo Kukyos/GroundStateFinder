@@ -1,0 +1,26 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_1",
+  "build_number": 1,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "cryptography >=2.0",
+    "dbus >=1.13.18,<2.0a0",
+    "jeepney >=0.6",
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "secretstorage-3.3.1-py313h06a4308_1.conda",
+  "license": "BSD-3-Clause",
+  "license_family": "BSD",
+  "md5": "bd9d99500717e83799f51f36825e6c2a",
+  "name": "secretstorage",
+  "platform": "linux",
+  "sha256": "ee43a4149495f4e48f71b8da77653607612d868bb47f9b7efbb2837141c02207",
+  "size": 29605,
+  "subdir": "linux-64",
+  "timestamp": 1728387701000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/secretstorage-3.3.1-py313h06a4308_1.conda",
+  "version": "3.3.1"
+}

@@ -1,0 +1,24 @@
+{
+  "arch": "x86_64",
+  "build": "hef5626c_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "__glibc >=2.17,<3.0.a0",
+    "libgcc-ng >=11.2.0",
+    "libstdcxx-ng >=11.2.0"
+  ],
+  "fn": "c-ares-1.34.5-hef5626c_0.conda",
+  "license": "MIT",
+  "license_family": "MIT",
+  "md5": "4a0059c416e26b3c5e8a8fdf11dfa811",
+  "name": "c-ares",
+  "platform": "linux",
+  "sha256": "a62774dc2e4d9bb3f8d2deca3dd1d4186e29c519772ac12ec2c200d3829b1dfc",
+  "size": 220802,
+  "subdir": "linux-64",
+  "timestamp": 1756141536000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/c-ares-1.34.5-hef5626c_0.conda",
+  "version": "1.34.5"
+}

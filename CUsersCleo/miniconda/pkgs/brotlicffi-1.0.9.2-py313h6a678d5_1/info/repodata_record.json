@@ -1,0 +1,25 @@
+{
+  "arch": "x86_64",
+  "build": "py313h6a678d5_1",
+  "build_number": 1,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "cffi >=1.0.0",
+    "libgcc-ng >=11.2.0",
+    "libstdcxx-ng >=11.2.0",
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "brotlicffi-1.0.9.2-py313h6a678d5_1.conda",
+  "license": "MIT",
+  "md5": "256e218354e6ffcd32269368b5b9590d",
+  "name": "brotlicffi",
+  "platform": "linux",
+  "sha256": "5dda4aeb3400a25e452a13a0f741878a9ec777ab13105266d74c03aa2ae077b8",
+  "size": 374031,
+  "subdir": "linux-64",
+  "timestamp": 1736182610000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/brotlicffi-1.0.9.2-py313h6a678d5_1.conda",
+  "version": "1.0.9.2"
+}

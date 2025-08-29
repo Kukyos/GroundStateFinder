@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "jaraco.context-6.0.0-py313h06a4308_0.conda",
+  "license": "MIT",
+  "license_family": "MIT",
+  "md5": "568af8d43ff7c6e7ecdc725bdc860053",
+  "name": "jaraco.context",
+  "platform": "linux",
+  "sha256": "26d6361685cb59641eb6fc7bd20d71139ce7c767a83288a13c42d8361b22e765",
+  "size": 17028,
+  "subdir": "linux-64",
+  "timestamp": 1731706769000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/jaraco.context-6.0.0-py313h06a4308_0.conda",
+  "version": "6.0.0"
+}

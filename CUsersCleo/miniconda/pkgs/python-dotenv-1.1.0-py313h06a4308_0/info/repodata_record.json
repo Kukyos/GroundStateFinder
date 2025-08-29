@@ -1,0 +1,24 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "click >=5.0",
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "python-dotenv-1.1.0-py313h06a4308_0.conda",
+  "license": "BSD-3-Clause",
+  "license_family": "BSD",
+  "md5": "33e2c8b6a83ba5bdbda0639bfb37496c",
+  "name": "python-dotenv",
+  "platform": "linux",
+  "sha256": "0b5457b49aae1076c2acb364466936cba0a48b2c5df5c79ed9aa8eb9f49cba98",
+  "size": 47980,
+  "subdir": "linux-64",
+  "timestamp": 1745610266000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/python-dotenv-1.1.0-py313h06a4308_0.conda",
+  "version": "1.1.0"
+}

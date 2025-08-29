@@ -1,0 +1,24 @@
+{
+  "arch": "x86_64",
+  "build": "hdb19cb5_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "fmt >=9.1.0,<10.0a0",
+    "libgcc-ng >=11.2.0",
+    "libstdcxx-ng >=11.2.0"
+  ],
+  "fn": "spdlog-1.11.0-hdb19cb5_0.conda",
+  "license": "MIT",
+  "license_family": "MIT",
+  "md5": "023cfe6341f1d90dee2016e608538537",
+  "name": "spdlog",
+  "platform": "linux",
+  "sha256": "bac82a4382c60aa28455305fd2ead3b687dcaa35ebd15a6ac42190e6e32e65df",
+  "size": 239450,
+  "subdir": "linux-64",
+  "timestamp": 1676361400000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/spdlog-1.11.0-hdb19cb5_0.conda",
+  "version": "1.11.0"
+}

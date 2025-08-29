@@ -1,4 +1,13 @@
 qiskit==1.2.4
 qiskit-nature==0.7.2
+qiskit-aer==0.12.0
+qiskit-terra==1.22.0
+qiskit-ibmq-provider==0.19.0
+pyscf==2.10.0
+numpy>=1.24,<2.0
+h5py
+pytest
+qiskit==1.2.4
+qiskit-nature==0.7.2
 # PySCF 2.4.x/2.5.x supports Python 3.10; choose a stable version
 pyscf==2.4.0

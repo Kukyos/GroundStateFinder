@@ -1,0 +1,23 @@
+{
+  "arch": "x86_64",
+  "build": "py313h06a4308_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64/",
+  "constrains": [],
+  "depends": [
+    "python >=3.13,<3.14.0a0",
+    "python_abi 3.13.* *_cp313"
+  ],
+  "fn": "packaging-25.0-py313h06a4308_0.conda",
+  "license": "Apache-2.0 or BSD-2-Clause",
+  "license_family": "Apache",
+  "md5": "7396e4349c90a320cb4aa1edf684886d",
+  "name": "packaging",
+  "platform": "linux",
+  "sha256": "ab1ced00a2b211df867e39a3fd10a49ecbf92e14f7451ed023578c9dcfed408b",
+  "size": 207513,
+  "subdir": "linux-64",
+  "timestamp": 1753775515000,
+  "url": "https://repo.anaconda.com/pkgs/main/linux-64/packaging-25.0-py313h06a4308_0.conda",
+  "version": "25.0"
+}
