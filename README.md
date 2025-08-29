@@ -1,4 +1,4 @@
-# H2 Qubit Hamiltonian (Qiskit Nature)
+a# H2 Qubit Hamiltonian (Qiskit Nature)
 
 Minimal example producing the Jordan–Wigner qubit Hamiltonian for the hydrogen molecule (H₂) in the STO-3G basis near equilibrium bond length (~0.74 Å).
 
