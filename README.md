@@ -104,6 +104,47 @@ Notes
 - The precomputed operator is provided for development and CI. For scientific use, regenerate the Hamiltonian with PySCF and include provenance (geometry, basis, method, mapping, qubit ordering).
 - If you hit import errors for PySCF on Windows prefer WSL+conda-forge or a Linux CI runner.
 
+Running on Google Colab
+-----------------------
+
+You can run the generator in Colab. Two approaches are provided below:
+
+1) Quick (pip) — fast but may fail if PySCF wheels are not available for the Colab Python version.
+
+```python
+# Quick Colab cell: try pip installs (may fail for pyscf)
+!pip install -q qiskit==1.2.4 qiskit-nature==0.7.2 pyscf==2.10.0
+!git clone https://github.com/Kukyos/GroundStateFinder.git repo
+!python repo/h2_qubit_hamiltonian.py -m NH3
+```
+
+2) Robust (conda-forge via condacolab) — recommended for the ab‑initio route. This installs PySCF from conda-forge (prebuilt binaries) then qiskit via pip. The first cell installs `condacolab` and requires a runtime restart; follow the prompt and re-run the following cells.
+
+```python
+# Colab cell 1: install condacolab and restart the runtime when prompted
+!pip install -q condacolab
+import condacolab
+condacolab.install()
+
+# After restart, run these cells
+```
+
+```bash
+# Colab cell 2: install PySCF / native deps with conda-forge, then pip-install qiskit
+!mamba install -y -c conda-forge pyscf numpy scipy h5py
+!pip install -q qiskit==1.2.4 qiskit-nature==0.7.2
+
+# Colab cell 3: clone repo and run
+!git clone https://github.com/Kukyos/GroundStateFinder.git repo
+!python repo/h2_qubit_hamiltonian.py -m NH3
+```
+
+Notes on Colab
+
+- If `mamba install pyscf` fails, try switching Python minor version (3.9) or use a cloud VM/WSL where conda is fully supported. Conda-forge provides the most reliable PySCF binaries.
+- Avoid creating named conda environments inside Colab for this workflow; install into the conda base environment and run directly in the notebook kernel.
+- For algorithm development you can also run with the precomputed operator (fast) and later run the ab‑initio step on a more powerful machine.
+
 License
 
 Apache-2.0. See `LICENSE`.
