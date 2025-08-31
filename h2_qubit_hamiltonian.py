@@ -293,12 +293,18 @@ def main():  # simple CLI usage
     )
 
     if args.json:
+        # Ensure JSON-serializable primitives (numpy floats can appear in settings)
+        raw_shift = getattr(op, "settings", {}).get("identity_shift", 0.0)
+        try:
+            shift = float(raw_shift)
+        except Exception:  # pragma: no cover - fallback
+            shift = float(getattr(raw_shift, "real", 0.0))
         data = {
             "molecule": args.molecule.upper(),
-            "num_qubits": op.num_qubits,
-            "identity_shift": getattr(op, "settings", {}).get("identity_shift", 0.0),
+            "num_qubits": int(op.num_qubits),
+            "identity_shift": shift,
             "terms": [
-                {"pauli": lbl, "coeff_real": c.real, "coeff_imag": c.imag}
+                {"pauli": lbl, "coeff_real": float(c.real), "coeff_imag": float(c.imag)}
                 for lbl, c in pauli_terms(op)
             ],
         }

@@ -190,6 +190,13 @@ def pauli_terms(op: SparsePauliOp, cutoff: float = 1e-12) -> List[Tuple[str, com
             out.append((label, complex(coeff)))
     return out
 
+def pauli_terms_json_ready(op: SparsePauliOp, cutoff: float = 1e-12) -> List[Dict[str, float]]:
+    """Return list of dicts with primitive float values for JSON serialization."""
+    js: List[Dict[str, float]] = []
+    for lbl, c in pauli_terms(op, cutoff=cutoff):
+        js.append({"pauli": lbl, "coeff_real": float(c.real), "coeff_imag": float(c.imag)})
+    return js
+
 def format_terms(op: SparsePauliOp, cutoff: float = 1e-12) -> str:
     rows = []
     for lbl, c in pauli_terms(op, cutoff=cutoff):
@@ -204,4 +211,5 @@ __all__ = [
     "build_molecule_qubit_hamiltonian",
     "pauli_terms",
     "format_terms",
+    "pauli_terms_json_ready",
 ]

@@ -1,20 +1,29 @@
-## NH3 qubit Hamiltonian (Qiskit Nature)
+## GroundStateFinder – Small Molecule Qubit Hamiltonians (H2, NH3 Active Space)
 
-This repository provides a small example that produces a Jordan–Wigner qubit Hamiltonian for ammonia (NH3) in the STO-3G basis.
+Generates Jordan–Wigner qubit Hamiltonians for:
+* NH3 (active space: 3 spatial orbitals / 4 electrons → 6 qubits)
+* H2 (minimal STO‑3G → 4 qubits)
 
-The script `h2_qubit_hamiltonian.py` (misnamed historically) attempts to compute the molecular integrals and build the electronic Hamiltonian using Qiskit Nature with a PySCF driver. If PySCF isn't available or can't be built on your system, the script falls back to a precomputed NH3 Hamiltonian so the repository can be used for development and algorithm tests without heavy native dependencies.
+Robust behavior:
+* Ab‑initio path via Qiskit Nature + PySCF when available.
+* Automatic NH3 6‑qubit fallback (precomputed) if integrals / transformer fail.
+* Optional identity stripping to separate constant shift.
+* Pauli term utilities (`pauli_terms`, `format_terms`).
 
-Files
+Package layout now lives under `src/groundstate/` while a legacy CLI wrapper `h2_qubit_hamiltonian.py` remains for convenience.
 
-- `h2_qubit_hamiltonian.py` – Main script. Call with `--precomputed` to force the included fallback operator.
-- `requirements.txt` – Suggested dependencies (use Python 3.10 if you intend to install PySCF).
+Core files
 
-Additional helper files
+| Path | Purpose |
+|------|---------|
+| `h2_qubit_hamiltonian.py` | Backward‑compatible CLI (will delegate to package soon). |
+| `src/groundstate/hamiltonian.py` | Main implementation (builder, formatting, fallback). |
+| `requirements.txt` | Reproducible dependency pins (Qiskit 2.x, PySCF). |
+| `tests/test_hamiltonian.py` | Basic qubit count & fallback tests. |
+| `save_operator.py` | Serialize `SparsePauliOp` to JSON. |
+| `colab/nh3_abinitio_colab.ipynb` | Colab helper (now minimal: install + clone + run). |
 
-- `save_operator.py` – small helper to save the produced SparsePauliOp to a JSON file.
-- `tests/test_hamiltonian.py` – pytest tests (happy path + fallback) that run quickly and verify the function returns a SparsePauliOp.
-
-Quick start (use precomputed fallback)
+Quick start (precomputed fallback)
 
 ```powershell
 # prints the precomputed NH3 Jordan-Wigner Hamiltonian
@@ -42,7 +51,7 @@ Output format
 
 Each printed line is `<coefficient> * <PauliString>` (sorted and compact). The operator is a `qiskit.quantum_info.SparsePauliOp` and is directly usable in VQE or other quantum algorithms.
 
-Provenance and best practices
+Provenance & best practices
 
 - The precomputed NH3 Hamiltonian is included as a convenience for development. Add provenance for any scientific use: geometry, basis (STO-3G), method (HF/CCSD/etc), mapping (Jordan–Wigner), and qubit ordering.
 - Using precomputed operators is common for testing, demos, and CI. For science-grade results, compute the Hamiltonian ab initio and document the method.
@@ -104,46 +113,19 @@ Notes
 - The precomputed operator is provided for development and CI. For scientific use, regenerate the Hamiltonian with PySCF and include provenance (geometry, basis, method, mapping, qubit ordering).
 - If you hit import errors for PySCF on Windows prefer WSL+conda-forge or a Linux CI runner.
 
-Running on Google Colab
------------------------
+Google Colab (minimal workflow)
+-------------------------------
 
-You can run the generator in Colab. Two approaches are provided below:
+New notebook flow is simplified to: (1) install dependencies, (2) clone repo, (3) run script. Active‑space + fallback logic lives only in the repo code (do not duplicate in the notebook).
 
-1) Quick (pip) — fast but may fail if PySCF wheels are not available for the Colab Python version.
-
+Single cell quick start (pip wheels):
 ```python
-# Quick Colab cell: try pip installs (may fail for pyscf)
-!pip install -q qiskit==1.2.4 qiskit-nature==0.7.2 pyscf==2.10.0
+!pip install -q qiskit==2.1.2 qiskit-nature==0.7.2 pyscf==2.6.1
 !git clone https://github.com/Kukyos/GroundStateFinder.git repo
-!python repo/h2_qubit_hamiltonian.py -m NH3
+!python repo/h2_qubit_hamiltonian.py -m NH3 --strip-identity
 ```
 
-2) Robust (conda-forge via condacolab) — recommended for the ab‑initio route. This installs PySCF from conda-forge (prebuilt binaries) then qiskit via pip. The first cell installs `condacolab` and requires a runtime restart; follow the prompt and re-run the following cells.
-
-```python
-# Colab cell 1: install condacolab and restart the runtime when prompted
-!pip install -q condacolab
-import condacolab
-condacolab.install()
-
-# After restart, run these cells
-```
-
-```bash
-# Colab cell 2: install PySCF / native deps with conda-forge, then pip-install qiskit
-!mamba install -y -c conda-forge pyscf numpy scipy h5py
-!pip install -q qiskit==1.2.4 qiskit-nature==0.7.2
-
-# Colab cell 3: clone repo and run
-!git clone https://github.com/Kukyos/GroundStateFinder.git repo
-!python repo/h2_qubit_hamiltonian.py -m NH3
-```
-
-Notes on Colab
-
-- If `mamba install pyscf` fails, try switching Python minor version (3.9) or use a cloud VM/WSL where conda is fully supported. Conda-forge provides the most reliable PySCF binaries.
-- Avoid creating named conda environments inside Colab for this workflow; install into the conda base environment and run directly in the notebook kernel.
-- For algorithm development you can also run with the precomputed operator (fast) and later run the ab‑initio step on a more powerful machine.
+If PySCF wheel is unavailable for the Colab Python version, fallback automatically triggers for NH3. For guaranteed PySCF success use a local WSL / conda environment.
 
 License
 
