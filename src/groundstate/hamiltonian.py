@@ -129,21 +129,28 @@ def build_molecule_qubit_hamiltonian(
             return _fallback_nh3(strip_identity)
         raise
 
+_IDENTITY_SHIFT_REGISTRY: dict[int, float] = {}
+
+def get_identity_shift(op: SparsePauliOp) -> float:
+    return _IDENTITY_SHIFT_REGISTRY.get(id(op), 0.0)
+
+def _record_shift(op: SparsePauliOp, shift: float) -> SparsePauliOp:
+    _IDENTITY_SHIFT_REGISTRY[id(op)] = float(shift)
+    return op
+
 def _strip_identity(op: SparsePauliOp) -> SparsePauliOp:
     labels = op.paulis.to_labels()
     identity_shift = 0.0
-    keep_idx = []
+    keep_idx: list[int] = []
     for i, lbl in enumerate(labels):
         if set(lbl) == {"I"}:
-            identity_shift += op.coeffs[i].real
+            identity_shift += float(op.coeffs[i].real)
         else:
             keep_idx.append(i)
     if len(keep_idx) == len(labels):
-        op.settings = {"identity_shift": identity_shift}
-        return op
+        return _record_shift(op, identity_shift)
     new_op = SparsePauliOp(op.paulis[keep_idx], op.coeffs[keep_idx])
-    new_op.settings = {"identity_shift": identity_shift}
-    return new_op
+    return _record_shift(new_op, identity_shift)
 
 def _extract_fermionic_hamiltonian(problem):
     try:
@@ -212,4 +219,5 @@ __all__ = [
     "pauli_terms",
     "format_terms",
     "pauli_terms_json_ready",
+    "get_identity_shift",
 ]

@@ -175,26 +175,33 @@ def build_molecule_qubit_hamiltonian(
         raise
 
 
-def _strip_identity(op: SparsePauliOp) -> SparsePauliOp:
-    """Return a copy without the all-identity term, storing its coefficient in metadata.
+_IDENTITY_SHIFT_REGISTRY: dict[int, float] = {}
 
-    Adds attribute: op.settings = { 'identity_shift': float }
-    (If identity absent, shift=0.)
-    """
+def _record_shift(op: SparsePauliOp, shift: float) -> SparsePauliOp:
+    """Store shift in a global registry keyed by object id (avoids mutating qiskit internals)."""
+    try:
+        _IDENTITY_SHIFT_REGISTRY[id(op)] = float(shift)
+    except Exception:
+        pass
+    return op
+
+def get_identity_shift(op: SparsePauliOp) -> float:
+    return _IDENTITY_SHIFT_REGISTRY.get(id(op), 0.0)
+
+def _strip_identity(op: SparsePauliOp) -> SparsePauliOp:
+    """Return a copy without the all-identity term and record its coefficient externally."""
     labels = op.paulis.to_labels()
     identity_shift = 0.0
-    keep_idx = []
+    keep_idx: list[int] = []
     for i, lbl in enumerate(labels):
         if set(lbl) == {"I"}:
-            identity_shift += op.coeffs[i].real  # imaginary part should be ~0
+            identity_shift += float(op.coeffs[i].real)
         else:
             keep_idx.append(i)
     if len(keep_idx) == len(labels):  # no identity removed
-        op.settings = {"identity_shift": identity_shift}
-        return op
+        return _record_shift(op, identity_shift)
     new_op = SparsePauliOp(op.paulis[keep_idx], op.coeffs[keep_idx])
-    new_op.settings = {"identity_shift": identity_shift}
-    return new_op
+    return _record_shift(new_op, identity_shift)
 
 
 def _extract_fermionic_hamiltonian(problem) :
@@ -293,12 +300,8 @@ def main():  # simple CLI usage
     )
 
     if args.json:
-        # Ensure JSON-serializable primitives (numpy floats can appear in settings)
-        raw_shift = getattr(op, "settings", {}).get("identity_shift", 0.0)
-        try:
-            shift = float(raw_shift)
-        except Exception:  # pragma: no cover - fallback
-            shift = float(getattr(raw_shift, "real", 0.0))
+        # Retrieve recorded shift (0.0 if none or not stripped)
+        shift = get_identity_shift(op)
         data = {
             "molecule": args.molecule.upper(),
             "num_qubits": int(op.num_qubits),
@@ -312,7 +315,7 @@ def main():  # simple CLI usage
     else:
         print(f"Qubit Hamiltonian ({args.molecule.upper()}):")
         if args.strip_identity:
-            print(f"Identity shift: {getattr(op, 'settings', {}).get('identity_shift', 0.0):+.12f}\n")
+            print(f"Identity shift: {get_identity_shift(op):+.12f}\n")
         print(format_terms(op))
 
 
