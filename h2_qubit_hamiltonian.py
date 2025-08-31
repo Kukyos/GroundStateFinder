@@ -16,18 +16,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, List
 
-from qiskit_nature.units import DistanceUnit
-from qiskit.quantum_info import SparsePauliOp
+from qiskit_nature.units import DistanceUnit # type: ignore
+from qiskit.quantum_info import SparsePauliOp # type: ignore
 
 try:  # driver & core components
-    from qiskit_nature.second_q.drivers import PySCFDriver
-    from qiskit_nature.second_q.problems import ElectronicStructureProblem
-    from qiskit_nature.second_q.mappers import JordanWignerMapper
+    from qiskit_nature.second_q.drivers import PySCFDriver # type: ignore
+    from qiskit_nature.second_q.problems import ElectronicStructureProblem # type: ignore
+    from qiskit_nature.second_q.mappers import JordanWignerMapper # type: ignore
     HAVE_PYSCF = True
 except Exception:
     HAVE_PYSCF = False
 try:  # active space transformer
-    from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
+    from qiskit_nature.second_q.transformers import ActiveSpaceTransformer # type: ignore
     HAVE_ACTIVE = True
 except Exception:
     HAVE_ACTIVE = False
