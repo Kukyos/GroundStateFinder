@@ -21,6 +21,7 @@ from qiskit_nature.second_q.problems import ElectronicStructureProblem # type: i
 from qiskit_nature.second_q.transformers import ActiveSpaceTransformer # type: ignore
 from qiskit_nature.second_q.mappers import JordanWignerMapper # type: ignore
 from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock # type: ignore
+import os
 
 
 def _geom_to_atom_string(geometry) -> str:
@@ -67,6 +68,7 @@ def uccsd_active(
     max_qubits: int = 12,
     param_scale: float = 0.02,
     seed: Optional[int] = None,
+    debug: bool = False,
 ):
     """Build a UCCSD ansatz with optional target qubit count.
 
@@ -80,6 +82,13 @@ def uccsd_active(
     if target_qubits is None:
         target_qubits = min(max_qubits, 8 if max_qubits >= 8 else max_qubits)
     electrons, spatial = _active_space_from_target_qubits(problem, target_qubits)
+    debug = debug or bool(os.getenv("GROUNDSTATE_DEBUG_UCCSD"))
+    if debug:
+        try:
+            full_parts = problem.num_particles if isinstance(problem.num_particles, (list, tuple)) else (problem.num_particles, problem.num_particles)
+            print(f"[uccsd_active] target_qubits={target_qubits} spatial={spatial} full_electrons={sum(full_parts)} full_spin_parts={full_parts} initial_active_electrons={electrons}")
+        except Exception:
+            pass
 
     # Build active space; if still fully occupied (edge case) decrement electrons and retry.
     # (Defensive: the earlier guard should prevent this, but race against API nuances.)
@@ -95,6 +104,10 @@ def uccsd_active(
         attempt_e -= 2
         if attempt_e <= 0:
             raise ValueError("Failed to find active space with at least one virtual orbital per spin.")
+        if debug:
+            print(f"[uccsd_active] Retrying with fewer electrons: attempt_e={attempt_e}")
+    if debug:
+        print(f"[uccsd_active] Final active electrons={attempt_e} spin_parts={parts} spin_orbitals={spin_orbs}")
 
     mapper = JordanWignerMapper()
     ansatz = UCCSD(
@@ -108,10 +121,10 @@ def uccsd_active(
     return ansatz, params, ansatz.num_qubits
 
 
-def uccsd_for_hamiltonian(geometry, hamiltonian, basis: str = "sto3g", **kwargs):
+def uccsd_for_hamiltonian(geometry, hamiltonian, basis: str = "sto3g", debug: bool = False, **kwargs):
     """Convenience wrapper sizing ansatz to an existing qubit Hamiltonian."""
     target_qubits = hamiltonian.num_qubits
-    ansatz, params, _ = uccsd_active(geometry, basis=basis, target_qubits=target_qubits, **kwargs)
+    ansatz, params, _ = uccsd_active(geometry, basis=basis, target_qubits=target_qubits, debug=debug, **kwargs)
     if ansatz.num_qubits != target_qubits:
         raise RuntimeError(
             f"Ansatz qubits {ansatz.num_qubits} != Hamiltonian qubits {target_qubits} (unexpected mismatch)."
