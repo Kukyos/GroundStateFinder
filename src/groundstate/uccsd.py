@@ -15,12 +15,12 @@ from __future__ import annotations
 from typing import Iterable, List, Sequence, Tuple, Optional
 import numpy as np
 
-from qiskit_nature.units import DistanceUnit
-from qiskit_nature.second_q.drivers import PySCFDriver
-from qiskit_nature.second_q.problems import ElectronicStructureProblem
-from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
-from qiskit_nature.second_q.mappers import JordanWignerMapper
-from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
+from qiskit_nature.units import DistanceUnit # type: ignore
+from qiskit_nature.second_q.drivers import PySCFDriver # type: ignore
+from qiskit_nature.second_q.problems import ElectronicStructureProblem # type: ignore
+from qiskit_nature.second_q.transformers import ActiveSpaceTransformer # type: ignore
+from qiskit_nature.second_q.mappers import JordanWignerMapper # type: ignore
+from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock # type: ignore
 
 
 def _geom_to_atom_string(geometry) -> str:
@@ -49,6 +49,12 @@ def _active_space_from_target_qubits(problem: ElectronicStructureProblem, target
     e = min(full_electrons, max_allowed)
     if e % 2:
         e -= 1
+    # UCCSD requires at least one virtual orbital per spin: n_spin < spatial.
+    # If we end up with a *fully* occupied active space (e/2 == spatial) there
+    # are zero virtual orbitals and UCCSD raises a configuration error.
+    # Reduce electrons (in pairs) until each spin count < spatial.
+    while e // 2 >= spatial and e > 0:
+        e -= 2
     if e <= 0:
         raise ValueError("Computed non-positive active electron count")
     return e, spatial
