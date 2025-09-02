@@ -137,23 +137,38 @@ def random_params(num_params: int, scale: float = 0.02, seed: Optional[int] = No
     return rng.normal(0, scale, num_params) if num_params else np.array([])
 
 
-def circuit_summary(ansatz, max_gates: int = 25, decompose: bool = False) -> str:
+def circuit_summary(ansatz, max_gates: int = 25, decompose: bool = False, max_decompose_passes: int = 5) -> str:
     """Return a textual summary of the ansatz.
 
     Parameters
     ----------
     ansatz : QuantumCircuit (UCCSD)
     max_gates : int
-        Maximum number of gate lines to list (after optional decomposition).
+        Maximum number of gate lines to list (after decomposition if enabled).
     decompose : bool
-        If True, decompose the high-level EvolvedOps structure so real primitive
-        gates are visible. By default UCCSD prints a single EvolvedOps meta op
-        which can look "empty" even though parameters/excitations exist.
+        If True, repeatedly decompose until no high-level evolution operators remain
+        or max_decompose_passes is reached. This exposes the primitive gates so the
+        circuit no longer looks visually empty.
+    max_decompose_passes : int
+        Safety cap on recursive decompositions.
     """
-    circ = ansatz.decompose() if decompose else ansatz
+    circ = ansatz
+    if decompose:
+        for _ in range(max_decompose_passes):
+            if not any(inst.operation.name.lower() in {"evolvedops", "evolutiongate", "paulievolution", "paulievolutiongate"} for inst in circ.data):
+                break
+            circ = circ.decompose()
     lines = [
         f"UCCSD: qubits={circ.num_qubits} params={ansatz.num_parameters} depth={circ.depth()} (decomposed={decompose})"
     ]
+    # Parameter symbols list (truncated)
+    params_list = list(ansatz.parameters)
+    if params_list:
+        shown = 12
+        display_params = ", ".join(str(p) for p in params_list[:shown])
+        if len(params_list) > shown:
+            display_params += f", ... +{len(params_list)-shown} more"
+        lines.append(f"Parameters: {display_params}")
     data = circ.data
     if len(data) <= max_gates:
         lines.append(str(circ))
