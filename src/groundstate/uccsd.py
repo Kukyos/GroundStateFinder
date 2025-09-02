@@ -81,8 +81,20 @@ def uccsd_active(
         target_qubits = min(max_qubits, 8 if max_qubits >= 8 else max_qubits)
     electrons, spatial = _active_space_from_target_qubits(problem, target_qubits)
 
-    transformer = ActiveSpaceTransformer(num_electrons=electrons, num_spatial_orbitals=spatial)
-    problem_active = transformer.transform(problem)
+    # Build active space; if still fully occupied (edge case) decrement electrons and retry.
+    # (Defensive: the earlier guard should prevent this, but race against API nuances.)
+    attempt_e = electrons
+    while True:
+        transformer = ActiveSpaceTransformer(num_electrons=attempt_e, num_spatial_orbitals=spatial)
+        problem_active = transformer.transform(problem)
+        spin_orbs = problem_active.num_spin_orbitals // 2
+        # problem_active.num_particles maybe tuple (alpha,beta)
+        parts = problem_active.num_particles if isinstance(problem_active.num_particles, (list, tuple)) else (problem_active.num_particles, problem_active.num_particles)
+        if all(p < spin_orbs for p in parts):
+            break
+        attempt_e -= 2
+        if attempt_e <= 0:
+            raise ValueError("Failed to find active space with at least one virtual orbital per spin.")
 
     mapper = JordanWignerMapper()
     ansatz = UCCSD(
