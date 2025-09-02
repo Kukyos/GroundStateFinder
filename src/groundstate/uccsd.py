@@ -137,16 +137,30 @@ def random_params(num_params: int, scale: float = 0.02, seed: Optional[int] = No
     return rng.normal(0, scale, num_params) if num_params else np.array([])
 
 
-def circuit_summary(ansatz, max_gates: int = 25) -> str:
-    """Return a textual summary of the ansatz (limited gate listing)."""
-    lines = [f"UCCSD: qubits={ansatz.num_qubits} params={ansatz.num_parameters} depth={ansatz.depth()}"]
-    data = ansatz.data
+def circuit_summary(ansatz, max_gates: int = 25, decompose: bool = False) -> str:
+    """Return a textual summary of the ansatz.
+
+    Parameters
+    ----------
+    ansatz : QuantumCircuit (UCCSD)
+    max_gates : int
+        Maximum number of gate lines to list (after optional decomposition).
+    decompose : bool
+        If True, decompose the high-level EvolvedOps structure so real primitive
+        gates are visible. By default UCCSD prints a single EvolvedOps meta op
+        which can look "empty" even though parameters/excitations exist.
+    """
+    circ = ansatz.decompose() if decompose else ansatz
+    lines = [
+        f"UCCSD: qubits={circ.num_qubits} params={ansatz.num_parameters} depth={circ.depth()} (decomposed={decompose})"
+    ]
+    data = circ.data
     if len(data) <= max_gates:
-        lines.append(str(ansatz))
+        lines.append(str(circ))
     else:
         lines.append(f"First {max_gates} / {len(data)} gates:")
         for inst in data[:max_gates]:
-            qubits = [ansatz.find_bit(q).index for q in inst.qubits]
+            qubits = [circ.find_bit(q).index for q in inst.qubits]
             lines.append(f"  {inst.operation.name} {qubits}")
         lines.append(f"  ... +{len(data) - max_gates} more gates")
     return "\n".join(lines)
