@@ -339,23 +339,23 @@ class AnsatzPlugin:
         Returns:
             dict: Complete ansatz system information
         """
-        if not self.is_built:
-            return {"built": False, "error": "Ansatz not built"}
-            
-        return {
-            "built": True,
-            "vqe_ready": self.vqe_ready,
-            "num_qubits": self.num_qubits,
-            "num_parameters": self.num_parameters,
-            "circuit_depth": self.ansatz_circuit.depth() if self.ansatz_circuit else 0,
-            "circuit_gates": len(self.ansatz_circuit.data) if self.ansatz_circuit else 0,
-            "num_spatial_orbitals": self.num_spatial_orbitals,
+        info = {
+            "built": self.is_built,
+            "vqe_ready": self.vqe_ready if self.is_built else False,
+            "num_qubits": self.num_qubits or 0,
+            "num_parameters": self.num_parameters if self.is_built else 0,
+            "circuit_depth": (self.ansatz_circuit.depth() if (self.is_built and self.ansatz_circuit) else 0),
+            "circuit_gates": (len(self.ansatz_circuit.data) if (self.is_built and self.ansatz_circuit) else 0),
+            "num_spatial_orbitals": self.num_spatial_orbitals or 0,
             "num_particles": self.num_particles,
             "ansatz_reps": self.ansatz_reps,
             "include_hf_state": self.include_hf_state,
             "basis": self.hamiltonian_system.get('basis', 'unknown') if self.hamiltonian_system else 'unknown',
             "geometry": self.hamiltonian_system.get('geometry', 'unknown') if self.hamiltonian_system else 'unknown'
         }
+        if not self.is_built:
+            info["error"] = "Ansatz not built"
+        return info
 
 
 # Keep the existing HamiltonianPlugin unchanged
