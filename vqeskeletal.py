@@ -6,7 +6,7 @@ import numpy as np
 __VQESKELETAL_VERSION__ = "2025-09-03a"
 
 # Imports for the Hamiltonian Plugin
-from qiskit.quantum_info import SparsePauliOp
+from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit import QuantumCircuit
 try:
     from qiskit.primitives import Estimator
@@ -563,18 +563,21 @@ class VQE:
                 return float(res.values[0])
             except Exception:
                 pass
-        # Fallback: simple diagonal (Z) term approximation if estimator unavailable
+        # Fallback path: compute full expectation via statevector simulation
         try:
-            # Evaluate only diagonal Pauli terms (Z/I) on HF reference as crude fallback
+            sv = Statevector.from_instruction(trial_wavefunction)
+            # Efficient expectation using Pauli decomposition
             energy = 0.0
             for p, c in zip(ham.paulis, ham.coeffs):
-                label = str(p)
-                if set(label) <= {'I','Z'}:
-                    # Assume HF all lower-spin orbitals occupied => parity approx -1 for first half
-                    contrib = c.real
-                    energy += contrib
-            return float(energy)
+                coeff = complex(c)
+                if abs(coeff) < 1e-14:
+                    continue
+                # Apply Pauli string to statevector and compute <psi|P|psi>
+                exp_val = sv.expectation_value(SparsePauliOp([p]))
+                energy += coeff * exp_val
+            return float(np.real_if_close(energy))
         except Exception:
+            # Ultimate minimal fallback: 0.0
             return 0.0
 
     def objective_function(self, parameters):
