@@ -426,7 +426,7 @@ class HamiltonianPlugin:
     PAD_SYNTHETIC = True
     SYN_COEFF_SCALE = 1e-8
 
-    def __init__(self):
+    def __init__(self, pad_synthetic=True, min_terms=400, physical_threshold=1e-6):
         self.geom = (
             "N  0.0000  0.0000  0.0000;"
             " H  0.9377  0.0000 -0.3816;"
@@ -434,8 +434,14 @@ class HamiltonianPlugin:
             " H -0.4688 -0.8119 -0.3816"
         )
         self._hamiltonian = None
+        self._hamiltonian_physical = None
         self._problem_active = None
         self._mapper = None
+        self._reference_rhf = None
+        # Configurable behavior
+        self.PAD_SYNTHETIC = pad_synthetic
+        self.MIN_TERMS = min_terms
+        self.PHYSICAL_THRESHOLD = physical_threshold
 
     def get_hamiltonian(self):
         """
@@ -447,9 +453,11 @@ class HamiltonianPlugin:
                 "problem_active": self._problem_active,
                 "mapper": self._mapper,
                 "hamiltonian_active": self._hamiltonian,
+                "hamiltonian_physical": self._hamiltonian_physical or self._hamiltonian,
                 "num_qubits": self._hamiltonian.num_qubits,
                 "basis": "sto3g",
-                "geometry": self.geom
+                "geometry": self.geom,
+                "reference_rhf_energy": self._reference_rhf
             }
         try:
             if not QISKIT_NATURE_INSTALLED:
@@ -472,6 +480,15 @@ class HamiltonianPlugin:
             if ham_active.num_qubits != 6:
                 raise RuntimeError(f'Active space produced {ham_active.num_qubits} qubits, expected 6.')
 
+            # PySCF RHF reference energy (direct) for benchmarking
+            try:
+                from pyscf import gto, scf
+                mol = gto.M(atom=self.geom.replace(';', '; '), basis='sto-3g', unit='Angstrom', charge=0, spin=0)
+                mf = scf.RHF(mol)
+                self._reference_rhf = float(mf.kernel())
+            except Exception:
+                self._reference_rhf = None
+
         except Exception as e:
             print(f'[Warning] Ab initio build failed: {e}. Using a fallback 6-qubit operator.')
             paulis = ['IIIIII', 'ZIIIZZ', 'ZZIIZZ', 'IZZIIZ', 'IIZZZZ', 'XXYYZZ', 'YYXXZZ']
@@ -479,24 +496,33 @@ class HamiltonianPlugin:
             ham_active = SparsePauliOp(paulis, coeffs)
             self._problem_active = None
             self._mapper = None
+            self._reference_rhf = None
 
-        terms = {str(p): complex(c) for p, c in zip(ham_active.paulis, ham_active.coeffs) if abs(complex(c)) > 1e-12}
-        physical_count = len(terms)
+        # Separate physical and padded terms
+        all_terms = {str(p): complex(c) for p, c in zip(ham_active.paulis, ham_active.coeffs) if abs(complex(c)) > 1e-12}
+        physical_terms = {lbl: coeff for lbl, coeff in all_terms.items() if abs(coeff) > self.PHYSICAL_THRESHOLD}
+        physical_count = len(physical_terms)
 
-        if self.PAD_SYNTHETIC and physical_count < self.MIN_TERMS:
-            self._add_synthetic_padding(terms, ham_active.num_qubits, physical_count)
+        # Build physical-only operator (before padding)
+        self._hamiltonian_physical = SparsePauliOp.from_list(list(physical_terms.items())) if physical_terms else ham_active
 
-        self._print_summary(terms, physical_count)
-        
-        self._hamiltonian = SparsePauliOp.from_list(list(terms.items()))
+        padded_terms = dict(physical_terms)  # start from physical
+        if self.PAD_SYNTHETIC and len(padded_terms) < self.MIN_TERMS:
+            self._add_synthetic_padding(padded_terms, ham_active.num_qubits, len(padded_terms))
+
+        self._print_summary(padded_terms, physical_count)
+
+        self._hamiltonian = SparsePauliOp.from_list(list(padded_terms.items()))
         
         return {
             "problem_active": self._problem_active,
             "mapper": self._mapper,
             "hamiltonian_active": self._hamiltonian,
+            "hamiltonian_physical": self._hamiltonian_physical or self._hamiltonian,
             "num_qubits": self._hamiltonian.num_qubits,
             "basis": "sto3g",
-            "geometry": self.geom
+            "geometry": self.geom,
+            "reference_rhf_energy": self._reference_rhf
         }
 
     def _add_synthetic_padding(self, terms, num_qubits, physical_count):
@@ -525,6 +551,73 @@ class ClassicalOptimizerPlugin:
         raise NotImplementedError("Optimizer plugin not implemented.")
 
 
+class HybridOptimizer(ClassicalOptimizerPlugin):
+    """Simple hybrid optimizer: coarse random sampling + local coordinate descent."""
+    def __init__(self, samples=20, local_iters=40, step=0.2, shrink=0.5, tol=1e-6, seed=None, bounds=None, verbose=True):
+        self.samples = samples
+        self.local_iters = local_iters
+        self.step = step
+        self.shrink = shrink
+        self.tol = tol
+        self.verbose = verbose
+        self.rng = np.random.default_rng(seed)
+        self.bounds = bounds  # list of (min,max)
+
+    def _clip(self, x):
+        if self.bounds is None:
+            return x
+        return np.array([np.clip(val, lo, hi) for val, (lo, hi) in zip(x, self.bounds)])
+
+    def _coordinate_descent(self, objective_function, start):
+        params = start.copy()
+        best_val = objective_function(params)
+        step = self.step
+        for _ in range(self.local_iters):
+            improved = False
+            for i in range(len(params)):
+                for direction in (+1, -1):
+                    trial = params.copy()
+                    trial[i] += direction * step
+                    trial = self._clip(trial)
+                    val = objective_function(trial)
+                    if val < best_val - self.tol:
+                        best_val = val
+                        params = trial
+                        improved = True
+                        if self.verbose:
+                            print(f"[hybrid] improved dim {i} dir {direction} -> {best_val:.6f}")
+            if not improved:
+                step *= self.shrink
+                if step < self.tol:
+                    break
+        return params, best_val
+
+    def optimize(self, objective_function, initial_params):
+        best_params = np.array(initial_params, dtype=float)
+        best_val = objective_function(best_params)
+        if self.verbose:
+            print(f"[hybrid] initial value {best_val:.6f}")
+        # Global sampling
+        for s in range(self.samples):
+            if self.bounds is not None:
+                trial = np.array([self.rng.uniform(lo, hi) for (lo, hi) in self.bounds])
+            else:
+                trial = self.rng.uniform(-1.0, 1.0, size=len(best_params))
+            val = objective_function(trial)
+            if val < best_val:
+                best_val = val
+                best_params = trial
+                if self.verbose:
+                    print(f"[hybrid] sample {s} improved -> {best_val:.6f}")
+        # Local refinement
+        refined, final_val = self._coordinate_descent(objective_function, best_params)
+        if final_val < best_val:
+            best_params, best_val = refined, final_val
+        if self.verbose:
+            print(f"[hybrid] final value {best_val:.6f}")
+        return best_params
+
+
 class ZNEDenoiserPlugin:
     """Plugin for applying Zero-Noise Extrapolation (ZNE) to mitigate errors."""
     def denoise(self, noisy_results):
@@ -536,11 +629,12 @@ class VQE:
     """
     The main VQE class that orchestrates the algorithm using the provided plugins.
     """
-    def __init__(self, ansatz_plugin, hamiltonian_plugin, optimizer_plugin, zne_plugin):
+    def __init__(self, ansatz_plugin, hamiltonian_plugin, optimizer_plugin, zne_plugin, use_physical_only=False):
         self.ansatz_plugin = ansatz_plugin
         self.hamiltonian_plugin = hamiltonian_plugin
         self.optimizer_plugin = optimizer_plugin
         self.zne_plugin = zne_plugin
+        self.use_physical_only = use_physical_only
         
         # Build the system
         self.hamiltonian_system = self.hamiltonian_plugin.get_hamiltonian()
@@ -555,7 +649,9 @@ class VQE:
 
     def _get_expectation_value(self, parameters):
         trial_wavefunction = self.ansatz_plugin.get_trial_wavefunction(parameters)
-        ham = self.hamiltonian_system['hamiltonian_active']
+        ham = (self.hamiltonian_system['hamiltonian_physical']
+               if self.use_physical_only and self.hamiltonian_system.get('hamiltonian_physical') is not None
+               else self.hamiltonian_system['hamiltonian_active'])
         if self._estimator is not None:
             try:
                 job = self._estimator.run([trial_wavefunction], [ham])
@@ -566,18 +662,15 @@ class VQE:
         # Fallback path: compute full expectation via statevector simulation
         try:
             sv = Statevector.from_instruction(trial_wavefunction)
-            # Efficient expectation using Pauli decomposition
             energy = 0.0
             for p, c in zip(ham.paulis, ham.coeffs):
                 coeff = complex(c)
                 if abs(coeff) < 1e-14:
                     continue
-                # Apply Pauli string to statevector and compute <psi|P|psi>
                 exp_val = sv.expectation_value(SparsePauliOp([p]))
                 energy += coeff * exp_val
             return float(np.real_if_close(energy))
         except Exception:
-            # Ultimate minimal fallback: 0.0
             return 0.0
 
     def objective_function(self, parameters):
