@@ -438,6 +438,8 @@ class HamiltonianPlugin:
         self._problem_active = None
         self._mapper = None
         self._reference_rhf = None
+        self._identity_coeff = None
+        self._nuclear_repulsion = None
         # Configurable behavior
         self.PAD_SYNTHETIC = pad_synthetic
         self.MIN_TERMS = min_terms
@@ -467,6 +469,10 @@ class HamiltonianPlugin:
             driver = PySCFDriver(atom=self.geom, basis='sto3g', charge=0, spin=0, unit=DistanceUnit.ANGSTROM)
             res = driver.run()
             problem_full = res if isinstance(res, ElectronicStructureProblem) else ElectronicStructureProblem(res)
+            try:
+                self._nuclear_repulsion = float(problem_full.nuclear_repulsion_energy)
+            except Exception:
+                self._nuclear_repulsion = None
 
             # Active space: 4 electrons, 3 spatial orbitals (6 spin orbitals / qubits)
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
@@ -476,6 +482,11 @@ class HamiltonianPlugin:
             self._mapper = JordanWignerMapper()
             fermionic_op = self._problem_active.hamiltonian.second_q_op()
             ham_active = self._mapper.map(fermionic_op)
+            # Capture identity coefficient (constant energy shift)
+            for p, c in zip(ham_active.paulis, ham_active.coeffs):
+                if str(p) == 'I' * ham_active.num_qubits:
+                    self._identity_coeff = complex(c)
+                    break
 
             if ham_active.num_qubits != 6:
                 raise RuntimeError(f'Active space produced {ham_active.num_qubits} qubits, expected 6.')
@@ -522,7 +533,9 @@ class HamiltonianPlugin:
             "num_qubits": self._hamiltonian.num_qubits,
             "basis": "sto3g",
             "geometry": self.geom,
-            "reference_rhf_energy": self._reference_rhf
+            "reference_rhf_energy": self._reference_rhf,
+            "identity_coefficient": self._identity_coeff,
+            "nuclear_repulsion_energy": self._nuclear_repulsion
         }
 
     def _add_synthetic_padding(self, terms, num_qubits, physical_count):
