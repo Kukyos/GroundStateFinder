@@ -631,6 +631,106 @@ class HybridOptimizer(ClassicalOptimizerPlugin):
         return best_params
 
 
+# Advanced hybrid optimizer integrating (optional) SPSA + COBYLA
+try:
+    from qiskit_algorithms.optimizers import SPSA as _QiskitSPSA, COBYLA as _QiskitCOBYLA
+except Exception:
+    _QiskitSPSA = None
+    _QiskitCOBYLA = None
+
+
+class AdvancedHybridOptimizer(ClassicalOptimizerPlugin):
+    """Three-stage hybrid optimizer: random sampling -> SPSA -> COBYLA.
+
+    Falls back gracefully if qiskit-algorithms optimizers are unavailable.
+    """
+    def __init__(self,
+                 samples=32,
+                 spsa_iters=80,
+                 cobyla_maxiter=200,
+                 random_bound=1.0,
+                 seed=None,
+                 bounds=None,
+                 verbose=True):
+        self.samples = samples
+        self.spsa_iters = spsa_iters
+        self.cobyla_maxiter = cobyla_maxiter
+        self.random_bound = random_bound
+        self.rng = np.random.default_rng(seed)
+        self.bounds = bounds  # list[(min,max)]
+        self.verbose = verbose
+
+    def _clip(self, x):
+        if self.bounds is None:
+            return x
+        return np.array([np.clip(val, lo, hi) for val, (lo, hi) in zip(x, self.bounds)])
+
+    def _random_sampling(self, objective_function, initial_params):
+        best_params = initial_params.copy()
+        best_val = objective_function(best_params)
+        if self.verbose:
+            print(f"[adv-hybrid] initial value {best_val:.6f}")
+        for s in range(self.samples):
+            if self.bounds is not None:
+                trial = np.array([self.rng.uniform(lo, hi) for (lo, hi) in self.bounds])
+            else:
+                trial = self.rng.uniform(-self.random_bound, self.random_bound, size=len(best_params))
+            val = objective_function(trial)
+            if val < best_val:
+                best_val = val
+                best_params = trial
+                if self.verbose:
+                    print(f"[adv-hybrid] sample {s} improved -> {best_val:.6f}")
+        return best_params, best_val
+
+    def _run_spsa(self, objective_function, start):
+        if _QiskitSPSA is None or self.spsa_iters <= 0:
+            if self.verbose:
+                print("[adv-hybrid] SPSA unavailable or disabled; skipping stage")
+            return start, objective_function(start)
+        if self.verbose:
+            print(f"[adv-hybrid] Running SPSA for {self.spsa_iters} iterations")
+        opt = _QiskitSPSA(maxiter=self.spsa_iters)
+        # qiskit-algorithms optimizers expect a callable returning (value, gradient) optionally; SPSA supports value-only
+        def fun(theta):
+            return objective_function(theta)
+        result = opt.minimize(fun=fun, x0=start)
+        final_params = self._clip(result.x)
+        final_val = objective_function(final_params)
+        if self.verbose:
+            print(f"[adv-hybrid] SPSA final value {final_val:.6f}")
+        return final_params, final_val
+
+    def _run_cobyla(self, objective_function, start):
+        if _QiskitCOBYLA is None or self.cobyla_maxiter <= 0:
+            if self.verbose:
+                print("[adv-hybrid] COBYLA unavailable or disabled; skipping stage")
+            return start, objective_function(start)
+        if self.verbose:
+            print(f"[adv-hybrid] Refining with COBYLA (maxiter={self.cobyla_maxiter})")
+        opt = _QiskitCOBYLA(maxiter=self.cobyla_maxiter)
+        def fun(theta):
+            return objective_function(theta)
+        result = opt.minimize(fun=fun, x0=start)
+        final_params = self._clip(result.x)
+        final_val = objective_function(final_params)
+        if self.verbose:
+            print(f"[adv-hybrid] COBYLA final value {final_val:.6f}")
+        return final_params, final_val
+
+    def optimize(self, objective_function, initial_params):
+        initial_params = np.array(initial_params, dtype=float)
+        # Stage 1: Random sampling
+        params, val = self._random_sampling(objective_function, initial_params)
+        # Stage 2: SPSA (if available)
+        params, val = self._run_spsa(objective_function, params)
+        # Stage 3: COBYLA (if available)
+        params, val = self._run_cobyla(objective_function, params)
+        if self.verbose:
+            print(f"[adv-hybrid] final optimized value {val:.6f}")
+        return params
+
+
 class ZNEDenoiserPlugin:
     """Plugin for applying Zero-Noise Extrapolation (ZNE) to mitigate errors."""
     def denoise(self, noisy_results):
