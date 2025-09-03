@@ -1,6 +1,9 @@
 import math
-import random 
-import numpy as np 
+import random
+import numpy as np
+
+# Module version / build tag for notebook reload diagnostics
+__VQESKELETAL_VERSION__ = "2025-09-03a"
 
 # Imports for the Hamiltonian Plugin
 from qiskit.quantum_info import SparsePauliOp
@@ -69,56 +72,82 @@ class AnsatzPlugin:
             bool: True if build successful, False otherwise
         """
         if self.verbose:
-            print("="*70)
+            print("=" * 70)
             print("BUILDING UCCSD ANSATZ FROM HAMILTONIAN")
-            print("="*70)
-        
+            print("=" * 70)
+
         self.hamiltonian_system = hamiltonian_system
-        
-        # Extract information from Hamiltonian system
-        problem_active = hamiltonian_system['problem_active']
-        mapper = hamiltonian_system['mapper']
-        hamiltonian = hamiltonian_system['hamiltonian_active']
+        self.last_error = None
 
-        if problem_active is None or mapper is None:
+        try:
+            problem_active = hamiltonian_system.get('problem_active')
+            mapper = hamiltonian_system.get('mapper')
+            hamiltonian = hamiltonian_system.get('hamiltonian_active')
+
+            if problem_active is None or mapper is None or hamiltonian is None:
+                if self.verbose:
+                    print("⚠ Incomplete Hamiltonian system; building fallback ansatz")
+                ok = self._build_fallback_ansatz(hamiltonian or hamiltonian_system.get('hamiltonian_active', None) or SparsePauliOp(['I'], [0.0]))
+                self.is_built = ok
+                return ok
+
+            # System properties
+            self.num_spatial_orbitals = problem_active.num_spin_orbitals // 2
+            self.num_particles = problem_active.num_particles
+            self.num_qubits = problem_active.num_spin_orbitals
+
             if self.verbose:
-                print("⚠ Warning: Cannot build full UCCSD ansatz - using fallback HF state")
-                print("  (problem_active or mapper is None)")
-            return self._build_fallback_ansatz(hamiltonian)
+                print("Molecular system properties:")
+                print(f"  Qubits: {self.num_qubits}")
+                print(f"  Spatial orbitals: {self.num_spatial_orbitals}")
+                print(f"  Particles (α, β): {self.num_particles}")
+                print(f"  Basis: {hamiltonian_system.get('basis', 'unknown')}")
 
-        # Extract system properties
-        self.num_spatial_orbitals = problem_active.num_spin_orbitals // 2
-        self.num_particles = problem_active.num_particles
-        self.num_qubits = problem_active.num_spin_orbitals
+            # HF state
+            if not self._build_hf_state(mapper):
+                if self.verbose:
+                    print("⚠ HF state build failed; using fallback ansatz")
+                ok = self._build_fallback_ansatz(hamiltonian)
+                self.is_built = ok
+                return ok
 
-        if self.verbose:
-            print(f"Molecular system properties:")
-            print(f"  Qubits: {self.num_qubits}")
-            print(f"  Spatial orbitals: {self.num_spatial_orbitals}")
-            print(f"  Particles (α, β): {self.num_particles}")
-            print(f"  Basis: {hamiltonian_system.get('basis', 'unknown')}")
+            # UCCSD
+            if not self._build_uccsd_ansatz(mapper):
+                if self.verbose:
+                    print("⚠ UCCSD build failed; using fallback ansatz")
+                ok = self._build_fallback_ansatz(hamiltonian)
+                self.is_built = ok
+                return ok
 
-        # Build Hartree-Fock reference state
-        success = self._build_hf_state(mapper)
-        if not success:
-            return False
+            # Validate
+            self._validate_system(hamiltonian)
+            self.is_built = True
 
-        # Build UCCSD ansatz
-        success = self._build_uccsd_ansatz(mapper)
-        if not success:
-            return False
+            if self.verbose:
+                print("\n✓ Ansatz construction complete!")
+                print(f"  Final qubits: {self.num_qubits}")
+                print(f"  Variational parameters: {self.num_parameters}")
+                print(f"  VQE ready: {self.vqe_ready}")
+            return True
 
-        # Validate and finalize
-        self._validate_system(hamiltonian)
-        self.is_built = True
-        
-        if self.verbose:
-            print(f"\n✓ Ansatz construction complete!")
-            print(f"  Final qubits: {self.num_qubits}")
-            print(f"  Variational parameters: {self.num_parameters}")
-            print(f"  VQE ready: {self.vqe_ready}")
-            
-        return True
+        except Exception as e:
+            self.last_error = str(e)
+            if self.verbose:
+                print(f"✗ build_from_hamiltonian encountered error: {e}")
+                print("  Falling back to generic parameterized ansatz.")
+            try:
+                # Fallback to simple circuit with same qubit count if possible
+                h_active = hamiltonian_system.get('hamiltonian_active')
+                if h_active is not None:
+                    self._build_fallback_ansatz(h_active)
+                else:
+                    # Minimal single-qubit fallback
+                    self._build_fallback_ansatz(SparsePauliOp(['I'], [0.0]))
+            except Exception as e2:
+                if self.verbose:
+                    print(f"  Secondary fallback failed: {e2}")
+                return False
+            return True
 
     def _build_fallback_ansatz(self, hamiltonian):
         """Build a simple fallback ansatz when full UCCSD isn't possible"""
@@ -258,11 +287,12 @@ class AnsatzPlugin:
             QuantumCircuit: Trial wavefunction circuit ready for VQE evaluation
         """
         if not self.is_built:
-            # Attempt automatic build if we have a stored hamiltonian_system
             if self.hamiltonian_system is not None:
+                if self.verbose:
+                    print("[auto-build] Attempting to build ansatz inside get_trial_wavefunction")
                 self.build_from_hamiltonian(self.hamiltonian_system)
             if not self.is_built:
-                raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
+                raise RuntimeError("Ansatz not built after auto-attempt in get_trial_wavefunction().")
             
         if self.num_parameters == 0:
             # No parameters to bind - return circuit as is
@@ -299,11 +329,12 @@ class AnsatzPlugin:
             np.array: Initial parameter values
         """
         if not self.is_built:
-            # Attempt automatic build using any stored Hamiltonian system
             if self.hamiltonian_system is not None:
+                if self.verbose:
+                    print("[auto-build] Attempting to build ansatz inside get_initial_parameters")
                 self.build_from_hamiltonian(self.hamiltonian_system)
             if not self.is_built:
-                raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
+                raise RuntimeError("Ansatz not built after auto-attempt in get_initial_parameters().")
             
         if self.num_parameters == 0:
             return np.array([])
@@ -359,7 +390,9 @@ class AnsatzPlugin:
             "ansatz_reps": self.ansatz_reps,
             "include_hf_state": self.include_hf_state,
             "basis": self.hamiltonian_system.get('basis', 'unknown') if self.hamiltonian_system else 'unknown',
-            "geometry": self.hamiltonian_system.get('geometry', 'unknown') if self.hamiltonian_system else 'unknown'
+            "geometry": self.hamiltonian_system.get('geometry', 'unknown') if self.hamiltonian_system else 'unknown',
+            "module_version": __VQESKELETAL_VERSION__,
+            "last_error": getattr(self, 'last_error', None)
         }
         if not self.is_built:
             info["error"] = "Ansatz not built"
