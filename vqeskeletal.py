@@ -258,7 +258,11 @@ class AnsatzPlugin:
             QuantumCircuit: Trial wavefunction circuit ready for VQE evaluation
         """
         if not self.is_built:
-            raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
+            # Attempt automatic build if we have a stored hamiltonian_system
+            if self.hamiltonian_system is not None:
+                self.build_from_hamiltonian(self.hamiltonian_system)
+            if not self.is_built:
+                raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
             
         if self.num_parameters == 0:
             # No parameters to bind - return circuit as is
@@ -295,7 +299,11 @@ class AnsatzPlugin:
             np.array: Initial parameter values
         """
         if not self.is_built:
-            raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
+            # Attempt automatic build using any stored Hamiltonian system
+            if self.hamiltonian_system is not None:
+                self.build_from_hamiltonian(self.hamiltonian_system)
+            if not self.is_built:
+                raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
             
         if self.num_parameters == 0:
             return np.array([])
@@ -356,6 +364,24 @@ class AnsatzPlugin:
         if not self.is_built:
             info["error"] = "Ansatz not built"
         return info
+
+    # Convenience method (can be called externally if desired)
+    def ensure_built(self, hamiltonian_system=None):
+        """Ensure the ansatz is built; build automatically if possible.
+
+        Args:
+            hamiltonian_system (dict|None): Optional Hamiltonian system dict. If not
+                provided, will use previously stored self.hamiltonian_system.
+
+        Returns:
+            bool: True if built (after this call), else False.
+        """
+        if self.is_built:
+            return True
+        system = hamiltonian_system or self.hamiltonian_system
+        if system is None:
+            return False
+        return bool(self.build_from_hamiltonian(system))
 
 
 # Keep the existing HamiltonianPlugin unchanged
