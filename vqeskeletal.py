@@ -405,9 +405,9 @@ class HamiltonianPlugin:
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
             self._problem_active = transformer.transform(problem_full)
 
-            # Mapper & qubit Hamiltonian (use stable second_q_ops access pattern)
+            # Mapper & qubit Hamiltonian (use direct hamiltonian.second_q_op for stability)
             self._mapper = JordanWignerMapper()
-            fermionic_op = self._problem_active.second_q_ops()["ElectronicEnergy"]
+            fermionic_op = self._problem_active.hamiltonian.second_q_op()
             ham_active = self._mapper.map(fermionic_op)
 
             if ham_active.num_qubits != 6:
