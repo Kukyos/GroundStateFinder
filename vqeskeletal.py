@@ -392,21 +392,23 @@ class HamiltonianPlugin:
                 "basis": "sto3g",
                 "geometry": self.geom
             }
-
         try:
             if not QISKIT_NATURE_INSTALLED:
                 raise ImportError("Qiskit Nature or its dependencies are not installed.")
 
+            # Build full electronic structure problem via driver
             driver = PySCFDriver(atom=self.geom, basis='sto3g', charge=0, spin=0, unit=DistanceUnit.ANGSTROM)
-            # Explicitly run the driver first to avoid attribute issues in some versions
-            driver_result = driver.run()
-            problem_full = ElectronicStructureProblem(driver_result)
+            res = driver.run()
+            problem_full = res if isinstance(res, ElectronicStructureProblem) else ElectronicStructureProblem(res)
+
+            # Active space: 4 electrons, 3 spatial orbitals (6 spin orbitals / qubits)
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
             self._problem_active = transformer.transform(problem_full)
-            
+
+            # Mapper & qubit Hamiltonian (use stable second_q_ops access pattern)
             self._mapper = JordanWignerMapper()
-            ham2 = self._problem_active.second_q_ops()['ElectronicEnergy']
-            ham_active = self._mapper.map(ham2)
+            fermionic_op = self._problem_active.second_q_ops()["ElectronicEnergy"]
+            ham_active = self._mapper.map(fermionic_op)
 
             if ham_active.num_qubits != 6:
                 raise RuntimeError(f'Active space produced {ham_active.num_qubits} qubits, expected 6.')
