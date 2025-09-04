@@ -1,6 +1,7 @@
 import math
-import random 
-import numpy as np 
+import random
+import os
+import numpy as np
 
 # Imports for the Hamiltonian Plugin
 from qiskit.quantum_info import SparsePauliOp # type: ignore
@@ -22,335 +23,173 @@ except ImportError:
 class AnsatzPlugin:
     """
     Unified UCCSD Ansatz Plugin for VQE
-    
-    Takes Hamiltonian system as input and provides trial wavefunctions
-    directly usable in VQE optimization.
     """
-
     def __init__(self, ansatz_reps=1, include_hf_state=True, verbose=True):
-        """
-        Initialize the unified ansatz plugin
-        
-        Args:
-            ansatz_reps: Number of UCCSD repetitions (for deeper circuits)
-            include_hf_state: Whether to include HF initial state in ansatz
-            verbose: Whether to print detailed construction information
-        """
         self.ansatz_reps = ansatz_reps
         self.include_hf_state = include_hf_state
         self.verbose = verbose
-        
-        # Ansatz system components (will be built when hamiltonian is provided)
         self.ansatz_circuit = None
         self.hf_state = None
         self.num_parameters = 0
         self.hamiltonian_system = None
         self.is_built = False
-        
-        # System properties
         self.num_qubits = 0
         self.num_spatial_orbitals = 0
         self.num_particles = None
         self.vqe_ready = False
 
     def build_from_hamiltonian(self, hamiltonian_system):
-        """
-        Build UCCSD ansatz from Hamiltonian system
-        
-        Args:
-            hamiltonian_system: Output dict from HamiltonianPlugin.get_hamiltonian()
-                               Must contain: 'problem_active', 'mapper', 'num_qubits'
-        
-        Returns:
-            bool: True if build successful, False otherwise
-        """
         if self.verbose:
             print("="*70)
             print("BUILDING UCCSD ANSATZ FROM HAMILTONIAN")
             print("="*70)
-        
         self.hamiltonian_system = hamiltonian_system
-        
-        # Extract information from Hamiltonian system
         problem_active = hamiltonian_system['problem_active']
         mapper = hamiltonian_system['mapper']
         hamiltonian = hamiltonian_system['hamiltonian_active']
-
         if problem_active is None or mapper is None:
             if self.verbose:
-                print("⚠ Warning: Cannot build full UCCSD ansatz - using fallback HF state")
-                print("  (problem_active or mapper is None)")
+                print("⚠ Warning: Cannot build full UCCSD ansatz - using fallback parameterized ansatz")
             return self._build_fallback_ansatz(hamiltonian)
-
-        # Extract system properties
         self.num_spatial_orbitals = problem_active.num_spin_orbitals // 2
         self.num_particles = problem_active.num_particles
         self.num_qubits = problem_active.num_spin_orbitals
-
         if self.verbose:
-            print(f"Molecular system properties:")
-            print(f"  Qubits: {self.num_qubits}")
-            print(f"  Spatial orbitals: {self.num_spatial_orbitals}")
-            print(f"  Particles (α, β): {self.num_particles}")
-            print(f"  Basis: {hamiltonian_system.get('basis', 'unknown')}")
-
-        # Build Hartree-Fock reference state
-        success = self._build_hf_state(mapper)
-        if not success:
+            print(f"System: qubits={self.num_qubits} spatial_orbs={self.num_spatial_orbitals} particles={self.num_particles}")
+        if not self._build_hf_state(mapper):
             return False
-
-        # Build UCCSD ansatz
-        success = self._build_uccsd_ansatz(mapper)
-        if not success:
+        if not self._build_uccsd_ansatz(mapper):
             return False
-
-        # Validate and finalize
         self._validate_system(hamiltonian)
         self.is_built = True
-        
         if self.verbose:
-            print(f"\n✓ Ansatz construction complete!")
-            print(f"  Final qubits: {self.num_qubits}")
-            print(f"  Variational parameters: {self.num_parameters}")
-            print(f"  VQE ready: {self.vqe_ready}")
-            
+            print(f"✓ Ansatz construction complete (params={self.num_parameters})")
         return True
 
     def _build_fallback_ansatz(self, hamiltonian):
-        """Build a simple fallback ansatz when full UCCSD isn't possible"""
         self.num_qubits = hamiltonian.num_qubits
-        self.num_parameters = 0
-        
-        # Create a simple parameterized circuit as fallback
-        fallback_circuit = QuantumCircuit(self.num_qubits)
-        
-        # Add some basic rotations as variational parameters
-        from qiskit.circuit import Parameter # type: ignore
+        from qiskit.circuit import Parameter  # type: ignore
+        qc = QuantumCircuit(self.num_qubits)
         params = []
         for i in range(self.num_qubits):
-            param = Parameter(f'theta_{i}')
-            params.append(param)
-            fallback_circuit.ry(param, i)
-            
-        # Add some entangling gates
-        for i in range(self.num_qubits - 1):
-            fallback_circuit.cx(i, i+1)
-            
-        self.ansatz_circuit = fallback_circuit
+            p = Parameter(f'theta_{i}')
+            qc.ry(p, i)
+            params.append(p)
+        for i in range(self.num_qubits-1):
+            qc.cx(i, i+1)
+        self.ansatz_circuit = qc
         self.num_parameters = len(params)
         self.vqe_ready = True
         self.is_built = True
-        
         if self.verbose:
-            print(f"✓ Built fallback parameterized ansatz with {self.num_parameters} parameters")
-            
+            print(f"✓ Fallback ansatz built with {self.num_parameters} parameters")
         return True
 
     def _build_hf_state(self, mapper):
-        """Build Hartree-Fock reference state"""
         try:
             self.hf_state = HartreeFock(
                 num_spin_orbitals=self.num_qubits,
                 num_particles=self.num_particles,
                 qubit_mapper=mapper
             )
-            
             if self.verbose:
-                print(f"✓ HF reference state created")
-                print(f"  HF circuit depth: {self.hf_state.depth()}")
-                print(f"  HF gates: {len(self.hf_state.data)}")
-            
+                print("✓ HF state ready")
             return True
-            
         except Exception as e:
             if self.verbose:
-                print(f"✗ Failed to create HF state: {e}")
+                print(f"HF state failed: {e}")
             return False
 
     def _build_uccsd_ansatz(self, mapper):
-        """Build UCCSD ansatz circuit"""
         try:
-            # Method 1: UCCSD with internal HF reference
-            uccsd_ansatz = UCCSD(
+            ucc = UCCSD(
                 num_spatial_orbitals=self.num_spatial_orbitals,
                 num_particles=self.num_particles,
                 qubit_mapper=mapper,
                 reps=self.ansatz_reps
             )
-            
-            self.ansatz_circuit = uccsd_ansatz
-            
+            if self.include_hf_state and self.hf_state is not None:
+                full = QuantumCircuit(self.num_qubits)
+                full.compose(self.hf_state, inplace=True)
+                full.compose(ucc, inplace=True)
+                full._parameters = ucc.parameters
+                self.ansatz_circuit = full
+            else:
+                self.ansatz_circuit = ucc
+        except Exception as e:
             if self.verbose:
-                print(f"✓ UCCSD ansatz created successfully")
-                
-        except Exception as e1:
-            if self.verbose:
-                print(f"✗ Standard UCCSD failed: {e1}")
-            
-            try:
-                # Method 2: Manual composition
-                uccsd_bare = UCCSD(
-                    num_spatial_orbitals=self.num_spatial_orbitals,
-                    num_particles=self.num_particles,
-                    qubit_mapper=mapper,
-                    reps=self.ansatz_reps
-                )
-
-                if self.include_hf_state and self.hf_state is not None:
-                    # Compose HF + UCCSD
-                    full_circuit = QuantumCircuit(self.num_qubits)
-                    full_circuit.compose(self.hf_state, inplace=True)
-                    full_circuit.compose(uccsd_bare, inplace=True)
-                    full_circuit._parameters = uccsd_bare.parameters
-                    self.ansatz_circuit = full_circuit
-                else:
-                    self.ansatz_circuit = uccsd_bare
-                    
-                if self.verbose:
-                    print(f"✓ UCCSD ansatz created via manual composition")
-                    
-            except Exception as e2:
-                if self.verbose:
-                    print(f"✗ Manual composition failed: {e2}")
-                    print("  Using HF-only ansatz")
-                
-                self.ansatz_circuit = self.hf_state if self.hf_state else QuantumCircuit(self.num_qubits)
-                
-        # Get number of parameters
+                print(f"UCCSD failed ({e}); using HF only")
+            self.ansatz_circuit = self.hf_state if self.hf_state else QuantumCircuit(self.num_qubits)
         if hasattr(self.ansatz_circuit, 'num_parameters'):
             self.num_parameters = self.ansatz_circuit.num_parameters
-        elif hasattr(self.ansatz_circuit, 'parameters'):
-            self.num_parameters = len(self.ansatz_circuit.parameters)
         else:
-            self.num_parameters = 0
-            
+            self.num_parameters = len(getattr(self.ansatz_circuit, 'parameters', []))
         if self.verbose:
-            print(f"  Circuit depth: {self.ansatz_circuit.depth()}")
-            print(f"  Total gates: {len(self.ansatz_circuit.data)}")
-            print(f"  Variational parameters: {self.num_parameters}")
-            
+            print(f"Ansatz depth={self.ansatz_circuit.depth()} gates={len(self.ansatz_circuit.data)} params={self.num_parameters}")
         return True
 
     def _validate_system(self, hamiltonian):
-        """Validate ansatz compatibility with Hamiltonian"""
         if hamiltonian.num_qubits != self.ansatz_circuit.num_qubits:
             if self.verbose:
-                print(f"⚠ Warning: Hamiltonian ({hamiltonian.num_qubits} qubits) and "
-                      f"ansatz ({self.ansatz_circuit.num_qubits} qubits) mismatch!")
+                print("Quubit mismatch; VQE not ready")
             self.vqe_ready = False
         else:
-            if self.verbose:
-                print(f"✓ Hamiltonian and ansatz compatible ({hamiltonian.num_qubits} qubits)")
             self.vqe_ready = self.num_parameters > 0
 
     def get_trial_wavefunction(self, parameters):
-        """
-        Get trial wavefunction (parameterized quantum circuit) for given parameters
-        
-        Args:
-            parameters: Variational parameters (numpy array or list)
-            
-        Returns:
-            QuantumCircuit: Trial wavefunction circuit ready for VQE evaluation
-        """
         if not self.is_built:
-            raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
-            
+            raise RuntimeError("Ansatz not built")
         if self.num_parameters == 0:
-            # No parameters to bind - return circuit as is
             return self.ansatz_circuit.copy()
-            
-        # Validate parameter count
         if len(parameters) != self.num_parameters:
-            raise ValueError(f"Expected {self.num_parameters} parameters, got {len(parameters)}")
-        
-        # Bind parameters to circuit
-        try:
-            if hasattr(self.ansatz_circuit, 'bind_parameters'):
-                trial_wavefunction = self.ansatz_circuit.bind_parameters(parameters)
-            else:
-                # Fallback method
-                trial_wavefunction = self.ansatz_circuit.copy()
-                if hasattr(trial_wavefunction, 'parameters') and trial_wavefunction.parameters:
-                    param_dict = dict(zip(trial_wavefunction.parameters, parameters))
-                    trial_wavefunction = trial_wavefunction.assign_parameters(param_dict)
-                    
-            return trial_wavefunction
-            
-        except Exception as e:
-            raise RuntimeError(f"Failed to bind parameters to ansatz: {e}")
+            raise ValueError("Parameter length mismatch")
+        if hasattr(self.ansatz_circuit, 'bind_parameters'):
+            return self.ansatz_circuit.bind_parameters(parameters)
+        trial = self.ansatz_circuit.copy()
+        if getattr(trial, 'parameters', None):
+            trial = trial.assign_parameters(dict(zip(trial.parameters, parameters)))
+        return trial
 
     def get_initial_parameters(self, init_type="zero"):
-        """
-        Generate initial parameters for optimization
-        
-        Args:
-            init_type: "zero", "random_small", "random_normal", or "hf_like"
-            
-        Returns:
-            np.array: Initial parameter values
-        """
         if not self.is_built:
-            raise RuntimeError("Ansatz not built. Call build_from_hamiltonian() first.")
-            
+            raise RuntimeError("Ansatz not built")
         if self.num_parameters == 0:
             return np.array([])
-            
-        if init_type == "zero":
+        if init_type == 'zero':
             return np.zeros(self.num_parameters)
-        elif init_type == "random_small":
+        if init_type == 'random_small':
             return np.random.normal(0, 0.01, self.num_parameters)
-        elif init_type == "random_normal":
+        if init_type == 'random_normal':
             return np.random.normal(0, 0.1, self.num_parameters)
-        elif init_type == "hf_like":
-            # Small perturbations around HF (all zeros)
+        if init_type == 'hf_like':
             return np.random.normal(0, 0.005, self.num_parameters)
-        else:
-            return np.zeros(self.num_parameters)
+        return np.zeros(self.num_parameters)
 
     def get_parameter_bounds(self, bound_type="standard"):
-        """
-        Get parameter bounds for constrained optimization
-        
-        Args:
-            bound_type: "tight", "standard", or "loose"
-            
-        Returns:
-            list: Parameter bounds [(min, max), ...] for each parameter
-        """
         if not self.is_built or self.num_parameters == 0:
             return []
-            
-        if bound_type == "tight":
-            return [(-0.1, 0.1)] * self.num_parameters
-        elif bound_type == "loose":
-            return [(-2*np.pi, 2*np.pi)] * self.num_parameters
-        else:  # standard
-            return [(-0.5, 0.5)] * self.num_parameters
+        if bound_type == 'tight':
+            return [(-0.1, 0.1)]*self.num_parameters
+        if bound_type == 'loose':
+            return [(-2*np.pi, 2*np.pi)]*self.num_parameters
+        return [(-0.5, 0.5)]*self.num_parameters
 
     def get_ansatz_info(self):
-        """
-        Get comprehensive information about the built ansatz
-        
-        Returns:
-            dict: Complete ansatz system information
-        """
         if not self.is_built:
-            return {"built": False, "error": "Ansatz not built"}
-            
+            return {"built": False}
         return {
-            "built": True,
-            "vqe_ready": self.vqe_ready,
-            "num_qubits": self.num_qubits,
-            "num_parameters": self.num_parameters,
-            "circuit_depth": self.ansatz_circuit.depth() if self.ansatz_circuit else 0,
-            "circuit_gates": len(self.ansatz_circuit.data) if self.ansatz_circuit else 0,
-            "num_spatial_orbitals": self.num_spatial_orbitals,
-            "num_particles": self.num_particles,
-            "ansatz_reps": self.ansatz_reps,
-            "include_hf_state": self.include_hf_state,
-            "basis": self.hamiltonian_system.get('basis', 'unknown') if self.hamiltonian_system else 'unknown',
-            "geometry": self.hamiltonian_system.get('geometry', 'unknown') if self.hamiltonian_system else 'unknown'
+            'built': True,
+            'vqe_ready': self.vqe_ready,
+            'num_qubits': self.num_qubits,
+            'num_parameters': self.num_parameters,
+            'circuit_depth': self.ansatz_circuit.depth() if self.ansatz_circuit else 0,
+            'circuit_gates': len(self.ansatz_circuit.data) if self.ansatz_circuit else 0,
+            'num_spatial_orbitals': self.num_spatial_orbitals,
+            'num_particles': self.num_particles,
+            'ansatz_reps': self.ansatz_reps,
+            'include_hf_state': self.include_hf_state,
+            'basis': self.hamiltonian_system.get('basis', 'unknown') if self.hamiltonian_system else 'unknown',
+            'geometry': self.hamiltonian_system.get('geometry', 'unknown') if self.hamiltonian_system else 'unknown'
         }
 
 
@@ -400,12 +239,59 @@ class HamiltonianPlugin:
                 "geometry": self.geom
             }
 
+        # Optional hard bypass: skip PySCFDriver entirely and build via pyscf + from_pyscf path
+        if os.environ.get('FORCE_FROM_PYSCF', '0') == '1':
+            try:
+                from pyscf import gto, scf  # type: ignore
+                from qiskit_nature.second_q.formats.pyscf import from_pyscf  # type: ignore
+                geom_str = self._normalize_geometry(self.geom)
+                mol = gto.M(atom=geom_str, basis='sto-3g', unit='Angstrom')
+                mf = scf.RHF(mol).run()
+                result_alt = from_pyscf(mf, include_dipole=False)
+                problem_full_alt = ElectronicStructureProblem(result_alt)
+                transformer_alt = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
+                self._problem_active = transformer_alt.transform(problem_full_alt)
+                self._mapper = JordanWignerMapper()
+                ham2_alt = self._problem_active.second_q_ops()['ElectronicEnergy']
+                ham_active = self._mapper.map(ham2_alt)
+                self._hamiltonian = ham_active
+                self.PAD_SYNTHETIC = False
+                self.is_fallback = False
+                print('[Info] Built Hamiltonian via FORCE_FROM_PYSCF path (full 2e terms).')
+                return {
+                    "problem_active": self._problem_active,
+                    "mapper": self._mapper,
+                    "hamiltonian_active": self._hamiltonian,
+                    "num_qubits": self._hamiltonian.num_qubits,
+                    "basis": "sto3g",
+                    "geometry": self.geom,
+                    "fallback": False
+                }
+            except Exception as force_e:
+                print(f"[Warning] FORCE_FROM_PYSCF path failed: {force_e}; continuing with standard logic.")
+
         try:
             if not QISKIT_NATURE_INSTALLED:
                 raise ImportError("Qiskit Nature or its dependencies are not installed.")
 
             atom_spec = self._normalize_geometry(self.geom)
             driver = PySCFDriver(atom=atom_spec, basis='sto3g', charge=0, spin=0, unit=DistanceUnit.ANGSTROM)
+
+            # Monkey patch missing legacy attribute if downstream code expects it
+            if not hasattr(driver, 'register_length'):
+                try:
+                    # Minimal estimate: run raw driver to infer spin orbitals
+                    raw_res = driver.run()
+                    es_problem = raw_res if isinstance(raw_res, ElectronicStructureProblem) else ElectronicStructureProblem(raw_res)
+                    guess_len = es_problem.molecule.num_molecular_orbitals * 2 if hasattr(es_problem, 'molecule') else 0
+                    try:
+                        # simple attribute set
+                        driver.register_length = guess_len  # type: ignore
+                    except Exception:
+                        pass
+                except Exception:
+                    driver.register_length = 0  # type: ignore
+
             problem_full = ElectronicStructureProblem(driver)
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
             self._problem_active = transformer.transform(problem_full)
@@ -424,55 +310,61 @@ class HamiltonianPlugin:
             if 'PySCFDriver' in str(e) or 'register_length' in str(e):
                 try:
                     import pyscf  # type: ignore
-                    from pyscf import gto, scf
+                    from pyscf import gto, scf  # type: ignore
                     geom_str = self._normalize_geometry(self.geom)
                     mol = gto.Mole()
                     mol.build(atom=geom_str, basis='sto-3g', unit='Angstrom')
                     mf = scf.RHF(mol)
                     e_hf = mf.kernel()
-                    from qiskit.quantum_info import SparsePauliOp as _SPO  # type: ignore
-                    # Build simple diagonal (number-operator) Hamiltonian approximation:
-                    # H ≈ C + Σ_p ε_p n_p where n_p = (I - Z_p)/2 and ε_p are orbital energies.
-                    # Choose an active subset (first n_orb spatial -> 2*n_orb spin orbitals) matching expected qubit count (=6).
-                    mo_energies = list(mf.mo_energy)
-                    n_spatial_target = 3  # keep consistent with earlier active space assumption
-                    if len(mo_energies) < n_spatial_target:
-                        n_spatial_target = len(mo_energies)
-                    active_eps = mo_energies[:n_spatial_target]
-                    # Duplicate for alpha/beta spin
-                    spin_eps = []
-                    for eps in active_eps:
-                        spin_eps.extend([float(eps), float(eps)])
-                    num_qubits = len(spin_eps)
-                    # HF occupation pattern: fill lowest electrons (4 electrons -> 2 alpha + 2 beta => 4 spin orbitals)
-                    n_electrons = 4
-                    occ_indices = list(range(n_electrons))
-                    sum_eps_occ = sum(spin_eps[i] for i in occ_indices)
-                    # Constant shift so HF expectation yields e_hf
-                    # Expectation of Σ ε_p n_p for HF occ = sum_eps_occ
-                    const_shift = e_hf - sum_eps_occ
-                    paulis = []
-                    coeffs = []
-                    # Constant term
-                    paulis.append('I'*num_qubits)
-                    coeffs.append(const_shift)
-                    # Terms: ε_p/2 * I and -ε_p/2 * Z_p combined => we already added constant shift, so add ε_p/2 to constant
-                    # Implement as separate (I) and (-Z_p) terms per orbital for clarity
-                    for p, eps in enumerate(spin_eps):
-                        # Add (eps/2) * I
-                        paulis.append('I'*num_qubits)
-                        coeffs.append(eps/2.0)
-                        # Add (-eps/2) * Z_p
-                        z_string = ['I']*num_qubits
-                        z_string[p] = 'Z'
-                        paulis.append(''.join(z_string))
-                        coeffs.append(-eps/2.0)
-                    ham_active = _SPO(paulis, coeffs)
-                    print(f'[Info] Direct PySCF HF energy = {e_hf:.6f} Hartree (diagonal orbital-energy Hamiltonian)')
-                    print('[Info] Using simplified diagonal Hamiltonian (no two-electron correlations).')
-                    # Disable synthetic padding for this diagonal model to keep operator sparse
-                    self.PAD_SYNTHETIC = False
-                    self.is_fallback = True  # still not full mapped Hamiltonian
+
+                    # First attempt: full mapped Hamiltonian via from_pyscf (retains 2e correlations)
+                    full_map_success = False
+                    try:
+                        from qiskit_nature.second_q.formats.pyscf import from_pyscf  # type: ignore
+                        result_alt = from_pyscf(mf, include_dipole=False)
+                        problem_full_alt = ElectronicStructureProblem(result_alt)
+                        transformer_alt = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
+                        self._problem_active = transformer_alt.transform(problem_full_alt)
+                        self._mapper = JordanWignerMapper()
+                        ham2_alt = self._problem_active.second_q_ops()['ElectronicEnergy']
+                        ham_active = self._mapper.map(ham2_alt)
+                        if ham_active.num_qubits == 6:
+                            full_map_success = True
+                            self.PAD_SYNTHETIC = False
+                            self.is_fallback = False
+                            print('[Info] Recovered full active-space Hamiltonian via from_pyscf fallback (includes 2e terms).')
+                        else:
+                            print(f'[Info] from_pyscf produced {ham_active.num_qubits} qubits (expected 6); discarding.')
+                            ham_active = None
+                    except Exception as map_e:
+                        print(f'[Info] from_pyscf path unavailable ({map_e}); reverting to diagonal HF model.')
+
+                    if not full_map_success:
+                        from qiskit.quantum_info import SparsePauliOp as _SPO  # type: ignore
+                        mo_energies = list(mf.mo_energy)
+                        n_spatial_target = 3
+                        if len(mo_energies) < n_spatial_target:
+                            n_spatial_target = len(mo_energies)
+                        active_eps = mo_energies[:n_spatial_target]
+                        spin_eps = []
+                        for eps in active_eps:
+                            spin_eps.extend([float(eps), float(eps)])
+                        num_qubits = len(spin_eps)
+                        n_electrons = 4
+                        occ_indices = list(range(min(n_electrons, len(spin_eps))))
+                        sum_eps_occ = sum(spin_eps[i] for i in occ_indices)
+                        const_shift = e_hf - sum_eps_occ
+                        paulis = ['I'*num_qubits]
+                        coeffs = [const_shift]
+                        for p, eps in enumerate(spin_eps):
+                            paulis.append('I'*num_qubits); coeffs.append(eps/2.0)
+                            z_string = ['I']*num_qubits; z_string[p] = 'Z'
+                            paulis.append(''.join(z_string)); coeffs.append(-eps/2.0)
+                        ham_active = _SPO(paulis, coeffs)
+                        print(f'[Info] Direct PySCF HF energy = {e_hf:.6f} Hartree (diagonal orbital-energy Hamiltonian)')
+                        print('[Info] Using simplified diagonal Hamiltonian (no two-electron correlations).')
+                        self.PAD_SYNTHETIC = False
+                        self.is_fallback = True
                 except Exception as de2:
                     direct_pyscf_failed = True
                     print(f'[Warning] Direct PySCF fallback failed: {de2}')
