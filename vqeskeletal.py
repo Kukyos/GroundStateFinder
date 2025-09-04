@@ -312,30 +312,8 @@ class HamiltonianPlugin:
                 except Exception:
                     driver.register_length = 0  # type: ignore
 
-            problem_full = ElectronicStructureProblem(driver)
-
-            # --- New: Ensure MO basis before ActiveSpaceTransformer to avoid 'None basis' error (0.7.x) ---
-            try:
-                # Attempt import paths for ElectronicBasis
-                try:
-                    from qiskit_nature.second_q.properties import ElectronicBasis  # type: ignore
-                except Exception:
-                    from qiskit_nature.second_q.properties.bases import ElectronicBasis  # type: ignore
-                # Convert if integrals exist and not already in MO basis
-                h_full = getattr(problem_full, 'hamiltonian', None)
-                ei = getattr(h_full, 'electronic_integrals', None)
-                current_basis = getattr(h_full, 'electronic_basis', None)
-                if ei and hasattr(ei, 'convert_basis') and current_basis is not None and current_basis != ElectronicBasis.MO:
-                    ei.convert_basis(ElectronicBasis.AO, ElectronicBasis.MO)
-                elif ei and hasattr(ei, 'convert_basis') and current_basis is None:
-                    # Some 0.7.x results set basis to None; try AO->MO directly
-                    try:
-                        ei.convert_basis(ElectronicBasis.AO, ElectronicBasis.MO)
-                    except Exception:
-                        pass
-            except Exception as basis_e:
-                print(f"[Info] Basis conversion skipped: {basis_e}")
-
+            # Correct usage: run driver to obtain populated ElectronicStructureProblem (already MO basis)
+            problem_full = driver.run()
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
             self._problem_active = transformer.transform(problem_full)
             
