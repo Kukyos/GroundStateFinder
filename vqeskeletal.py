@@ -374,6 +374,7 @@ class HamiltonianPlugin:
         self._hamiltonian = None
         self._problem_active = None
         self._mapper = None
+        self.is_fallback = False  # Tracks whether synthetic Hamiltonian was used
 
     def _normalize_geometry(self, geom):
         """Return geometry in a PySCFDriver-acceptable form (string or list[str])."""
@@ -417,16 +418,39 @@ class HamiltonianPlugin:
                 raise RuntimeError(f'Active space produced {ham_active.num_qubits} qubits, expected 6.')
 
         except Exception as e:
-            print(f'[Warning] Ab initio build failed: {e}. Using a fallback 6-qubit operator.')
+            print(f'[Warning] Ab initio build failed: {e}. Attempting direct PySCF fallback...')
+            direct_pyscf_failed = False
+            ham_active = None
+            if 'PySCFDriver' in str(e) or 'register_length' in str(e):
+                try:
+                    import pyscf  # type: ignore
+                    from pyscf import gto, scf
+                    geom_str = self._normalize_geometry(self.geom)
+                    mol = gto.Mole()
+                    mol.build(atom=geom_str, basis='sto-3g', unit='Angstrom')
+                    mf = scf.RHF(mol)
+                    e_hf = mf.kernel()
+                    # Minimal placeholder: construct constant energy operator with identity term
+                    # so expectation gives HF energy baseline; real mapping requires integrals mapping.
+                    ham_active = SparsePauliOp(['I'* (mol.nao*2)], [e_hf])
+                    print(f'[Info] Direct PySCF HF energy = {e_hf:.6f} Hartree (identity operator placeholder)')
+                    self.is_fallback = True  # still not full mapped Hamiltonian
+                except Exception as de2:
+                    direct_pyscf_failed = True
+                    print(f'[Warning] Direct PySCF fallback failed: {de2}')
+            if ham_active is None:
+                print('Using a synthetic 6-qubit operator.')
             if not QISKIT_NATURE_INSTALLED:
                 print('[Info] qiskit-nature not detected. Install with: pip install qiskit-nature pyscf')
             else:
                 print('[Info] Check geometry formatting or PySCF availability.')
-            paulis = ['IIIIII', 'ZIIIZZ', 'ZZIIZZ', 'IZZIIZ', 'IIZZZZ', 'XXYYZZ', 'YYXXZZ']
-            coeffs = [-5.0, 0.12, -0.08, 0.05, -0.03, 0.01, 0.01]
-            ham_active = SparsePauliOp(paulis, coeffs)
+            if ham_active is None:
+                paulis = ['IIIIII', 'ZIIIZZ', 'ZZIIZZ', 'IZZIIZ', 'IIZZZZ', 'XXYYZZ', 'YYXXZZ']
+                coeffs = [-5.0, 0.12, -0.08, 0.05, -0.03, 0.01, 0.01]
+                ham_active = SparsePauliOp(paulis, coeffs)
             self._problem_active = None
             self._mapper = None
+            self.is_fallback = True
 
         terms = {str(p): complex(c) for p, c in zip(ham_active.paulis, ham_active.coeffs) if abs(complex(c)) > 1e-12}
         physical_count = len(terms)
@@ -444,7 +468,22 @@ class HamiltonianPlugin:
             "hamiltonian_active": self._hamiltonian,
             "num_qubits": self._hamiltonian.num_qubits,
             "basis": "sto3g",
-            "geometry": self.geom
+            "geometry": self.geom,
+            "fallback": self.is_fallback
+        }
+
+    def was_fallback(self):
+        """Return True if synthetic fallback Hamiltonian was used."""
+        return self.is_fallback
+
+    def info(self):
+        """Return a concise diagnostic dictionary about the Hamiltonian state."""
+        return {
+            'fallback': self.is_fallback,
+            'num_qubits': self._hamiltonian.num_qubits if self._hamiltonian else None,
+            'active_problem': self._problem_active is not None,
+            'mapper': self._mapper.__class__.__name__ if self._mapper else None,
+            'geometry_lines': len(self.geom) if isinstance(self.geom, (list, tuple)) else 1
         }
 
     def _add_synthetic_padding(self, terms, num_qubits, physical_count):
@@ -704,7 +743,7 @@ class ZNEDenoiserPlugin:
         if noise_factor <= 1.0:
             return original_circuit.copy()
         
-        from qiskit import QuantumCircuit
+        from qiskit import QuantumCircuit # type: ignore
         
         # Create a copy of the original circuit
         noisy_circuit = original_circuit.copy()
