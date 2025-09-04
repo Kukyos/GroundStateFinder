@@ -242,33 +242,53 @@ class HamiltonianPlugin:
         # Optional hard bypass: skip PySCFDriver entirely and build via pyscf + from_pyscf path
         if os.environ.get('FORCE_FROM_PYSCF', '0') == '1':
             try:
+                # Attempt modern from_pyscf helper if available, else degrade gracefully to driver logic
                 from pyscf import gto, scf  # type: ignore
-                from qiskit_nature.second_q.formats.pyscf import from_pyscf  # type: ignore
                 geom_str = self._normalize_geometry(self.geom)
                 mol = gto.M(atom=geom_str, basis='sto-3g', unit='Angstrom')
                 mf = scf.RHF(mol).run()
-                result_alt = from_pyscf(mf, include_dipole=False)
-                problem_full_alt = ElectronicStructureProblem(result_alt)
-                transformer_alt = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
-                self._problem_active = transformer_alt.transform(problem_full_alt)
-                self._mapper = JordanWignerMapper()
-                ham2_alt = self._problem_active.second_q_ops()['ElectronicEnergy']
-                ham_active = self._mapper.map(ham2_alt)
-                self._hamiltonian = ham_active
-                self.PAD_SYNTHETIC = False
-                self.is_fallback = False
-                print('[Info] Built Hamiltonian via FORCE_FROM_PYSCF path (full 2e terms).')
-                return {
-                    "problem_active": self._problem_active,
-                    "mapper": self._mapper,
-                    "hamiltonian_active": self._hamiltonian,
-                    "num_qubits": self._hamiltonian.num_qubits,
-                    "basis": "sto3g",
-                    "geometry": self.geom,
-                    "fallback": False
-                }
+                ham_active = None
+                full_map_success = False
+                try:
+                    # Newer qiskit-nature versions expose a formats.pyscf import; 0.7.2 may not.
+                    from qiskit_nature.second_q.formats.pyscf import from_pyscf  # type: ignore
+                    result_alt = from_pyscf(mf, include_dipole=False)
+                    problem_full_alt = ElectronicStructureProblem(result_alt)
+                    # Attempt MO basis conversion if needed
+                    try:
+                        from qiskit_nature.second_q.properties import ElectronicBasis  # type: ignore
+                        ei = getattr(problem_full_alt.hamiltonian, 'electronic_integrals', None)
+                        if ei and hasattr(ei, 'convert_basis') and getattr(problem_full_alt.hamiltonian, 'electronic_basis', None) != ElectronicBasis.MO:
+                            ei.convert_basis(ElectronicBasis.AO, ElectronicBasis.MO)
+                    except Exception:
+                        pass
+                    transformer_alt = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
+                    self._problem_active = transformer_alt.transform(problem_full_alt)
+                    self._mapper = JordanWignerMapper()
+                    ham2_alt = self._problem_active.second_q_ops()['ElectronicEnergy']
+                    ham_active = self._mapper.map(ham2_alt)
+                    if ham_active.num_qubits == 6:
+                        full_map_success = True
+                except Exception:
+                    pass
+                if full_map_success:
+                    self._hamiltonian = ham_active
+                    self.PAD_SYNTHETIC = False
+                    self.is_fallback = False
+                    print('[Info] Built Hamiltonian via FORCE_FROM_PYSCF path (full 2e terms).')
+                    return {
+                        "problem_active": self._problem_active,
+                        "mapper": self._mapper,
+                        "hamiltonian_active": self._hamiltonian,
+                        "num_qubits": self._hamiltonian.num_qubits,
+                        "basis": "sto3g",
+                        "geometry": self.geom,
+                        "fallback": False
+                    }
+                else:
+                    print('[Warning] FORCE_FROM_PYSCF full mapping unavailable; reverting to standard driver path.')
             except Exception as force_e:
-                print(f"[Warning] FORCE_FROM_PYSCF path failed: {force_e}; continuing with standard logic.")
+                print(f"[Warning] FORCE_FROM_PYSCF path failed early: {force_e}; continuing with standard logic.")
 
         try:
             if not QISKIT_NATURE_INSTALLED:
@@ -293,6 +313,29 @@ class HamiltonianPlugin:
                     driver.register_length = 0  # type: ignore
 
             problem_full = ElectronicStructureProblem(driver)
+
+            # --- New: Ensure MO basis before ActiveSpaceTransformer to avoid 'None basis' error (0.7.x) ---
+            try:
+                # Attempt import paths for ElectronicBasis
+                try:
+                    from qiskit_nature.second_q.properties import ElectronicBasis  # type: ignore
+                except Exception:
+                    from qiskit_nature.second_q.properties.bases import ElectronicBasis  # type: ignore
+                # Convert if integrals exist and not already in MO basis
+                h_full = getattr(problem_full, 'hamiltonian', None)
+                ei = getattr(h_full, 'electronic_integrals', None)
+                current_basis = getattr(h_full, 'electronic_basis', None)
+                if ei and hasattr(ei, 'convert_basis') and current_basis is not None and current_basis != ElectronicBasis.MO:
+                    ei.convert_basis(ElectronicBasis.AO, ElectronicBasis.MO)
+                elif ei and hasattr(ei, 'convert_basis') and current_basis is None:
+                    # Some 0.7.x results set basis to None; try AO->MO directly
+                    try:
+                        ei.convert_basis(ElectronicBasis.AO, ElectronicBasis.MO)
+                    except Exception:
+                        pass
+            except Exception as basis_e:
+                print(f"[Info] Basis conversion skipped: {basis_e}")
+
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
             self._problem_active = transformer.transform(problem_full)
             
