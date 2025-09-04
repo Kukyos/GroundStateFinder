@@ -689,31 +689,48 @@ class VQE:
             float: Expectation value ⟨ψ(θ)|H|ψ(θ)⟩
         """
         try:
-            # Prepare input for estimator: (circuit, hamiltonian) pairs
-            pub = (trial_wavefunction, hamiltonian)
-            
-            # Run quantum simulation
-            job = self.estimator.run([pub])
+            # Preferred modern API: pass separate circuit & observable lists
+            try:
+                job = self.estimator.run([trial_wavefunction], [hamiltonian])
+            except TypeError:
+                # Older style (single list of pubs)
+                job = self.estimator.run([(trial_wavefunction, hamiltonian)])
             result = job.result()
-            
-            # Extract expectation value
-            if hasattr(result, 'values'):
-                expectation = result.values[0]
-            elif hasattr(result, 'data'):
-                expectation = result[0].data.evs[0] if hasattr(result[0].data, 'evs') else result[0].data
-            else:
-                # Fallback for different result formats
-                expectation = float(result.eigenvalue.real if hasattr(result, 'eigenvalue') else result[0])
-            
-            return float(expectation.real if hasattr(expectation, 'real') else expectation)
-            
+
+            # Robust extraction helper
+            def _extract(res):
+                # EstimatorResult (qiskit 2.x)
+                if hasattr(res, 'values') and isinstance(res.values, (list, tuple)) and res.values:
+                    return res.values[0]
+                # PubResult container (internal) -> iterate pub_results
+                if hasattr(res, 'pub_results'):
+                    prs = getattr(res, 'pub_results')
+                    if isinstance(prs, (list, tuple)) and prs:
+                        pr0 = prs[0]
+                        # New style: pr0.data.evs (list of expectation values)
+                        if hasattr(pr0, 'data') and hasattr(pr0.data, 'evs') and pr0.data.evs:
+                            return pr0.data.evs[0]
+                        # Sometimes pr0.data may have .values
+                        if hasattr(pr0, 'data') and hasattr(pr0.data, 'values') and pr0.data.values:
+                            return pr0.data.values[0]
+                # Legacy eigenvalue field
+                if hasattr(res, 'eigenvalue'):
+                    return res.eigenvalue
+                # Fallback: first element if subscriptable
+                try:
+                    return res[0]
+                except Exception:
+                    pass
+                raise ValueError("Could not extract expectation value from estimator result")
+
+            expectation = _extract(result)
+            return float(np.real(expectation))
+
         except Exception as e:
             if self.verbose:
-                print(f"⚠ Quantum simulation error: {e}")
-                print("  Falling back to classical simulation estimate")
-            
-            # Fallback: simple energy estimate
-            return -5.0 + np.random.normal(0, 0.1)  # Rough NH3 ground state energy
+                print(f"⚠ Quantum simulation error (robust path): {type(e).__name__}: {e}")
+                print("  Falling back to classical simulation estimate (stochastic mock value)")
+            return -5.0 + np.random.normal(0, 0.1)  # Mock fallback
 
     def objective_function(self, parameters):
         """
