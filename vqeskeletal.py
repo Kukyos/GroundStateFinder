@@ -300,27 +300,25 @@ class HamiltonianPlugin:
             # Monkey patch missing legacy attribute if downstream code expects it
             if not hasattr(driver, 'register_length'):
                 try:
-                    # Minimal estimate: run raw driver to infer spin orbitals
-                    raw_res = driver.run()
-                    es_problem = raw_res if isinstance(raw_res, ElectronicStructureProblem) else ElectronicStructureProblem(raw_res)
-                    guess_len = es_problem.molecule.num_molecular_orbitals * 2 if hasattr(es_problem, 'molecule') else 0
-                    try:
-                        # simple attribute set
-                        driver.register_length = guess_len  # type: ignore
-                    except Exception:
-                        pass
+                    raw_res_tmp = driver.run()
+                    guess_len = getattr(raw_res_tmp, 'num_spatial_orbitals', 0) * 2
+                    driver.register_length = guess_len  # type: ignore
                 except Exception:
                     driver.register_length = 0  # type: ignore
 
-            # Correct usage: run driver to obtain populated ElectronicStructureProblem (already MO basis)
-            problem_full = driver.run()
+            raw_res = driver.run()
+            # Some versions return ElectronicStructureProblem directly; if not, wrap
+            problem_full = raw_res if isinstance(raw_res, ElectronicStructureProblem) else ElectronicStructureProblem(raw_res)
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
-            self._problem_active = transformer.transform(problem_full)
-            
+            try:
+                self._problem_active = transformer.transform(problem_full)
+            except Exception as t_e:
+                # Fallback: attempt direct integral reconstruction
+                raise RuntimeError(f"Active space transform failed ({t_e})")
+
             self._mapper = JordanWignerMapper()
             ham2 = self._problem_active.second_q_ops()['ElectronicEnergy']
             ham_active = self._mapper.map(ham2)
-
             if ham_active.num_qubits != 6:
                 raise RuntimeError(f'Active space produced {ham_active.num_qubits} qubits, expected 6.')
 
@@ -361,31 +359,61 @@ class HamiltonianPlugin:
                         print(f'[Info] from_pyscf path unavailable ({map_e}); reverting to diagonal HF model.')
 
                     if not full_map_success:
-                        from qiskit.quantum_info import SparsePauliOp as _SPO  # type: ignore
-                        mo_energies = list(mf.mo_energy)
-                        n_spatial_target = 3
-                        if len(mo_energies) < n_spatial_target:
-                            n_spatial_target = len(mo_energies)
-                        active_eps = mo_energies[:n_spatial_target]
-                        spin_eps = []
-                        for eps in active_eps:
-                            spin_eps.extend([float(eps), float(eps)])
-                        num_qubits = len(spin_eps)
-                        n_electrons = 4
-                        occ_indices = list(range(min(n_electrons, len(spin_eps))))
-                        sum_eps_occ = sum(spin_eps[i] for i in occ_indices)
-                        const_shift = e_hf - sum_eps_occ
-                        paulis = ['I'*num_qubits]
-                        coeffs = [const_shift]
-                        for p, eps in enumerate(spin_eps):
-                            paulis.append('I'*num_qubits); coeffs.append(eps/2.0)
-                            z_string = ['I']*num_qubits; z_string[p] = 'Z'
-                            paulis.append(''.join(z_string)); coeffs.append(-eps/2.0)
-                        ham_active = _SPO(paulis, coeffs)
-                        print(f'[Info] Direct PySCF HF energy = {e_hf:.6f} Hartree (diagonal orbital-energy Hamiltonian)')
-                        print('[Info] Using simplified diagonal Hamiltonian (no two-electron correlations).')
-                        self.PAD_SYNTHETIC = False
-                        self.is_fallback = True
+                        # NEW: attempt integral-based correlated Hamiltonian before diagonal simplification
+                        try:
+                            from qiskit_nature.second_q.hamiltonians import ElectronicEnergy  # type: ignore
+                            from qiskit_nature.second_q.operators import FermionicOp  # type: ignore
+                            # AO integrals
+                            h1_ao = mf.get_hcore()
+                            from pyscf import ao2mo  # type: ignore
+                            eri_ao = ao2mo.full(mf._eri, mf.mo_coeff)  # MO two-electron (chemist)
+                            # Build one- and two-body in MO basis
+                            C = mf.mo_coeff
+                            h1_mo = C.T @ h1_ao @ C
+                            nmo = h1_mo.shape[0]
+                            # Reshape two-electron integrals (chemist notation) (ij|kl)
+                            eri_mo = ao2mo.restore(1, eri_ao, nmo)
+                            # ElectronicEnergy helper
+                            ee = ElectronicEnergy.from_raw_integrals(h1_mo, eri_mo)
+                            problem_full_alt2 = ElectronicStructureProblem(ee)
+                            transformer_alt2 = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
+                            self._problem_active = transformer_alt2.transform(problem_full_alt2)
+                            self._mapper = JordanWignerMapper()
+                            ham2_alt2 = self._problem_active.second_q_ops()['ElectronicEnergy']
+                            ham_active = self._mapper.map(ham2_alt2)
+                            if ham_active.num_qubits == 6:
+                                print('[Info] Built correlated Hamiltonian from raw PySCF integrals (includes 2e terms).')
+                                self.PAD_SYNTHETIC = False
+                                self.is_fallback = False
+                            else:
+                                ham_active = None
+                        except Exception as int_e:
+                            # Final diagonal model
+                            from qiskit.quantum_info import SparsePauliOp as _SPO  # type: ignore
+                            mo_energies = list(mf.mo_energy)
+                            n_spatial_target = 3
+                            if len(mo_energies) < n_spatial_target:
+                                n_spatial_target = len(mo_energies)
+                            active_eps = mo_energies[:n_spatial_target]
+                            spin_eps = []
+                            for eps in active_eps:
+                                spin_eps.extend([float(eps), float(eps)])
+                            num_qubits = len(spin_eps)
+                            n_electrons = 4
+                            occ_indices = list(range(min(n_electrons, len(spin_eps))))
+                            sum_eps_occ = sum(spin_eps[i] for i in occ_indices)
+                            const_shift = e_hf - sum_eps_occ
+                            paulis = ['I'*num_qubits]
+                            coeffs = [const_shift]
+                            for p, eps in enumerate(spin_eps):
+                                paulis.append('I'*num_qubits); coeffs.append(eps/2.0)
+                                z_string = ['I']*num_qubits; z_string[p] = 'Z'
+                                paulis.append(''.join(z_string)); coeffs.append(-eps/2.0)
+                            ham_active = _SPO(paulis, coeffs)
+                            print(f'[Info] Direct PySCF HF energy = {e_hf:.6f} Hartree (diagonal orbital-energy Hamiltonian)')
+                            print('[Info] Using simplified diagonal Hamiltonian (no two-electron correlations).')
+                            self.PAD_SYNTHETIC = False
+                            self.is_fallback = True
                 except Exception as de2:
                     direct_pyscf_failed = True
                     print(f'[Warning] Direct PySCF fallback failed: {de2}')
