@@ -1,4 +1,4 @@
-import math
+import mathimport math
 import random 
 import numpy as np 
 
@@ -457,10 +457,410 @@ class ClassicalOptimizerPlugin:
         raise NotImplementedError("Optimizer plugin not implemented.")
 
 
+import numpy as np
+from typing import List, Union, Callable, Optional
+import warnings
+
 class ZNEDenoiserPlugin:
-    """Plugin for applying Zero-Noise Extrapolation (ZNE) to mitigate errors."""
-    def denoise(self, noisy_results):
-        return noisy_results
+    """
+    Advanced Zero-Noise Extrapolation (ZNE) Plugin for VQE Error Mitigation
+    
+    Implements multiple ZNE strategies including:
+    - Richardson extrapolation
+    - Exponential fitting
+    - Polynomial fitting
+    - Adaptive noise scaling
+    """
+
+    def __init__(self, 
+                 noise_factors: List[float] = None,
+                 extrapolation_method: str = 'richardson',
+                 polynomial_degree: int = 2,
+                 min_noise_factor: float = 1.0,
+                 max_noise_factor: float = 5.0,
+                 adaptive_threshold: float = 0.01,
+                 verbose: bool = True):
+        """
+        Initialize ZNE plugin with comprehensive error mitigation options
+        
+        Args:
+            noise_factors: List of noise scaling factors (>= 1.0)
+            extrapolation_method: 'richardson', 'exponential', 'polynomial', 'linear'
+            polynomial_degree: Degree for polynomial extrapolation
+            min_noise_factor: Minimum noise scaling factor
+            max_noise_factor: Maximum noise scaling factor
+            adaptive_threshold: Convergence threshold for adaptive methods
+            verbose: Enable detailed output
+        """
+        # Default noise factors for Richardson extrapolation
+        if noise_factors is None:
+            self.noise_factors = [1.0, 3.0, 5.0]  # Odd factors work well
+        else:
+            self.noise_factors = sorted([max(1.0, f) for f in noise_factors])
+            
+        self.extrapolation_method = extrapolation_method.lower()
+        self.polynomial_degree = polynomial_degree
+        self.min_noise_factor = min_noise_factor
+        self.max_noise_factor = max_noise_factor
+        self.adaptive_threshold = adaptive_threshold
+        self.verbose = verbose
+        
+        # Tracking for analysis
+        self.zne_history = []
+        self.improvement_history = []
+        
+        if self.verbose:
+            print(f"🔧 ZNE Plugin initialized:")
+            print(f"   Method: {self.extrapolation_method}")
+            print(f"   Noise factors: {self.noise_factors}")
+
+    def denoise(self, noisy_results: Union[float, List[float], np.ndarray]) -> float:
+        """
+        Apply ZNE to denoise quantum expectation values
+        
+        Args:
+            noisy_results: Either single noisy value or list of values at different noise levels
+            
+        Returns:
+            float: Zero-noise extrapolated expectation value
+        """
+        # Handle single value input (backward compatibility)
+        if isinstance(noisy_results, (int, float)):
+            if self.verbose:
+                print("⚠️  ZNE: Single value provided, returning as-is (no extrapolation possible)")
+            return float(noisy_results)
+        
+        # Convert to numpy array
+        noisy_values = np.array(noisy_results, dtype=float)
+        
+        # Validate input
+        if len(noisy_values) != len(self.noise_factors):
+            if self.verbose:
+                print(f"⚠️  ZNE: Expected {len(self.noise_factors)} values, got {len(noisy_values)}")
+                print("   Returning first value without extrapolation")
+            return float(noisy_values[0]) if len(noisy_values) > 0 else 0.0
+        
+        # Perform extrapolation
+        try:
+            extrapolated_value = self._perform_extrapolation(noisy_values)
+            
+            # Track improvement
+            original_value = noisy_values[0]  # Value at noise_factor = 1.0
+            improvement = abs(extrapolated_value - original_value)
+            
+            self.zne_history.append({
+                'noise_factors': self.noise_factors.copy(),
+                'noisy_values': noisy_values.copy(),
+                'extrapolated': extrapolated_value,
+                'original': original_value,
+                'improvement': improvement
+            })
+            
+            self.improvement_history.append(improvement)
+            
+            if self.verbose:
+                print(f"📊 ZNE Applied:")
+                print(f"   Noisy values: {noisy_values}")
+                print(f"   Noise factors: {self.noise_factors}")
+                print(f"   Extrapolated: {extrapolated_value:.8f}")
+                print(f"   Improvement: {improvement:.8f}")
+            
+            return float(extrapolated_value)
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"❌ ZNE Error: {e}")
+                print("   Returning original noisy value")
+            return float(noisy_values[0])
+
+    def _perform_extrapolation(self, noisy_values: np.ndarray) -> float:
+        """Perform the actual extrapolation based on selected method"""
+        noise_factors = np.array(self.noise_factors)
+        
+        if self.extrapolation_method == 'richardson':
+            return self._richardson_extrapolation(noise_factors, noisy_values)
+        elif self.extrapolation_method == 'exponential':
+            return self._exponential_extrapolation(noise_factors, noisy_values)
+        elif self.extrapolation_method == 'polynomial':
+            return self._polynomial_extrapolation(noise_factors, noisy_values)
+        elif self.extrapolation_method == 'linear':
+            return self._linear_extrapolation(noise_factors, noisy_values)
+        else:
+            raise ValueError(f"Unknown extrapolation method: {self.extrapolation_method}")
+
+    def _richardson_extrapolation(self, noise_factors: np.ndarray, values: np.ndarray) -> float:
+        """Richardson extrapolation for ZNE"""
+        if len(values) < 2:
+            return values[0]
+        
+        # Use Richardson extrapolation formula
+        # For two points: f(0) ≈ (λ₂f(λ₁) - λ₁f(λ₂)) / (λ₂ - λ₁)
+        if len(values) == 2:
+            λ1, λ2 = noise_factors[0], noise_factors[1]
+            f1, f2 = values[0], values[1]
+            return (λ2 * f1 - λ1 * f2) / (λ2 - λ1)
+        
+        # For multiple points, use weighted Richardson extrapolation
+        weights = []
+        extrapolated_values = []
+        
+        for i in range(len(values) - 1):
+            for j in range(i + 1, len(values)):
+                λ1, λ2 = noise_factors[i], noise_factors[j]
+                f1, f2 = values[i], values[j]
+                extrapolated = (λ2 * f1 - λ1 * f2) / (λ2 - λ1)
+                extrapolated_values.append(extrapolated)
+                # Weight inversely by noise factor difference
+                weight = 1.0 / abs(λ2 - λ1)
+                weights.append(weight)
+        
+        # Weighted average of all pairwise extrapolations
+        weights = np.array(weights)
+        extrapolated_values = np.array(extrapolated_values)
+        
+        return np.average(extrapolated_values, weights=weights)
+
+    def _exponential_extrapolation(self, noise_factors: np.ndarray, values: np.ndarray) -> float:
+        """Exponential decay model: E(λ) = a + b*exp(-c*λ)"""
+        try:
+            # Fit exponential decay: E(λ) = a*exp(-b*λ) + c
+            from scipy.optimize import curve_fit
+            
+            def exp_model(x, a, b, c):
+                return a * np.exp(-b * x) + c
+            
+            # Initial guess
+            p0 = [values[0] - values[-1], 0.1, values[-1]]
+            
+            popt, _ = curve_fit(exp_model, noise_factors, values, p0=p0, maxfev=1000)
+            
+            # Extrapolate to λ = 0
+            return exp_model(0, *popt)
+            
+        except (ImportError, RuntimeError, ValueError):
+            # Fallback to simple exponential fit
+            try:
+                # Linear fit in log space: log(E) = log(a) + b*λ
+                log_values = np.log(np.abs(values) + 1e-12)  # Avoid log(0)
+                coeffs = np.polyfit(noise_factors, log_values, 1)
+                return np.exp(coeffs[1])  # exp(log(a)) = a
+            except:
+                # Final fallback to linear extrapolation
+                return self._linear_extrapolation(noise_factors, values)
+
+    def _polynomial_extrapolation(self, noise_factors: np.ndarray, values: np.ndarray) -> float:
+        """Polynomial extrapolation to λ = 0"""
+        degree = min(self.polynomial_degree, len(values) - 1)
+        
+        try:
+            # Fit polynomial
+            coeffs = np.polyfit(noise_factors, values, degree)
+            # Evaluate at λ = 0
+            return np.polyval(coeffs, 0)
+        except (np.linalg.LinAlgError, ValueError):
+            # Fallback to linear
+            return self._linear_extrapolation(noise_factors, values)
+
+    def _linear_extrapolation(self, noise_factors: np.ndarray, values: np.ndarray) -> float:
+        """Simple linear extrapolation"""
+        try:
+            # Fit line: E(λ) = a + b*λ
+            coeffs = np.polyfit(noise_factors, values, 1)
+            # Evaluate at λ = 0: E(0) = a
+            return coeffs[1]
+        except (np.linalg.LinAlgError, ValueError):
+            # Ultimate fallback
+            return values[0]
+
+    def create_noisy_circuit(self, original_circuit, noise_factor: float):
+        """
+        Create a noisier version of the circuit by inserting identity gate pairs
+        
+        This is a common ZNE technique called "unitary folding"
+        
+        Args:
+            original_circuit: Original quantum circuit
+            noise_factor: Factor by which to scale noise (>= 1.0)
+            
+        Returns:
+            Modified circuit with increased noise
+        """
+        if noise_factor <= 1.0:
+            return original_circuit.copy()
+        
+        from qiskit import QuantumCircuit
+        
+        # Create a copy of the original circuit
+        noisy_circuit = original_circuit.copy()
+        
+        # Calculate number of identity pairs to insert
+        # Each identity pair (I followed by I†) increases circuit depth
+        # without changing the logical operation
+        num_identity_pairs = int((noise_factor - 1.0) * len(original_circuit.data))
+        
+        if num_identity_pairs > 0:
+            # Insert identity pairs at random locations
+            np.random.seed(42)  # For reproducibility
+            
+            for _ in range(num_identity_pairs):
+                # Choose random qubit
+                qubit = np.random.randint(0, noisy_circuit.num_qubits)
+                
+                # Insert X-X pair (equivalent to identity but adds noise)
+                noisy_circuit.x(qubit)
+                noisy_circuit.x(qubit)
+        
+        return noisy_circuit
+
+    def get_zne_analysis(self) -> dict:
+        """Get analysis of ZNE performance"""
+        if not self.zne_history:
+            return {"error": "No ZNE history available"}
+        
+        improvements = np.array(self.improvement_history)
+        
+        return {
+            "total_applications": len(self.zne_history),
+            "average_improvement": np.mean(improvements),
+            "std_improvement": np.std(improvements),
+            "max_improvement": np.max(improvements),
+            "min_improvement": np.min(improvements),
+            "extrapolation_method": self.extrapolation_method,
+            "noise_factors": self.noise_factors,
+            "success_rate": np.sum(improvements > 0) / len(improvements) * 100
+        }
+
+    def adaptive_zne(self, measurement_function: Callable, initial_params: np.ndarray) -> float:
+        """
+        Adaptive ZNE that automatically determines optimal noise factors
+        
+        Args:
+            measurement_function: Function that takes (params, noise_factor) and returns expectation value
+            initial_params: Parameters for the measurement function
+            
+        Returns:
+            Zero-noise extrapolated value
+        """
+        if self.verbose:
+            print("🔄 Running adaptive ZNE...")
+        
+        # Start with minimum noise factor
+        current_factors = [1.0]
+        current_values = [measurement_function(initial_params, 1.0)]
+        
+        # Iteratively add noise factors until convergence
+        for factor in np.linspace(2.0, self.max_noise_factor, 10):
+            current_factors.append(factor)
+            current_values.append(measurement_function(initial_params, factor))
+            
+            if len(current_values) >= 3:
+                # Try extrapolation with current data
+                temp_plugin = ZNEDenoiserPlugin(
+                    noise_factors=current_factors,
+                    extrapolation_method=self.extrapolation_method,
+                    verbose=False
+                )
+                
+                extrapolated = temp_plugin.denoise(current_values)
+                
+                # Check for convergence
+                if len(current_values) > 3:
+                    prev_extrapolated = temp_plugin.denoise(current_values[:-1])
+                    if abs(extrapolated - prev_extrapolated) < self.adaptive_threshold:
+                        if self.verbose:
+                            print(f"   Converged after {len(current_values)} measurements")
+                        break
+        
+        # Final extrapolation
+        self.noise_factors = current_factors
+        return self.denoise(current_values)
+
+
+# Integration helper for VQE class
+class ZNEIntegratedMeasurement:
+    """
+    Helper class to integrate ZNE directly into VQE measurement process
+    """
+    
+    def __init__(self, vqe_instance, zne_plugin: ZNEDenoiserPlugin):
+        self.vqe = vqe_instance
+        self.zne_plugin = zne_plugin
+    
+    def measure_with_zne(self, parameters: np.ndarray) -> float:
+        """
+        Perform measurement with automatic ZNE error mitigation
+        
+        Args:
+            parameters: Variational parameters
+            
+        Returns:
+            Zero-noise extrapolated expectation value
+        """
+        # Get trial wavefunction
+        trial_wavefunction = self.vqe.ansatz_plugin.get_trial_wavefunction(parameters)
+        hamiltonian = self.vqe.hamiltonian_system['hamiltonian_active']
+        
+        # Measure at different noise levels
+        noisy_values = []
+        
+        for noise_factor in self.zne_plugin.noise_factors:
+            if noise_factor == 1.0:
+                # Original circuit
+                noisy_circuit = trial_wavefunction
+            else:
+                # Create noisier version
+                noisy_circuit = self.zne_plugin.create_noisy_circuit(trial_wavefunction, noise_factor)
+            
+            # Measure expectation value
+            expectation = self.vqe._simulate_measurement(noisy_circuit, hamiltonian)
+            noisy_values.append(expectation)
+        
+        # Apply ZNE
+        return self.zne_plugin.denoise(noisy_values)
+
+
+# Example usage and testing
+def test_zne_plugin():
+    """Test the ZNE plugin with synthetic noisy data"""
+    print("🧪 Testing ZNE Plugin")
+    print("="*50)
+    
+    # Create ZNE plugin
+    zne = ZNEDenoiserPlugin(
+        noise_factors=[1.0, 2.0, 3.0, 4.0],
+        extrapolation_method='richardson',
+        verbose=True
+    )
+    
+    # Simulate noisy measurements (true value = -1.8572)
+    true_value = -1.8572
+    noise_factors = [1.0, 2.0, 3.0, 4.0]
+    
+    # Simulate exponential decay with noise
+    noisy_values = []
+    for factor in noise_factors:
+        noise = 0.1 * (factor - 1.0)  # Noise increases with factor
+        measured = true_value + noise + 0.01 * np.random.randn()
+        noisy_values.append(measured)
+    
+    print(f"True value: {true_value}")
+    print(f"Noisy measurements: {noisy_values}")
+    
+    # Apply ZNE
+    denoised = zne.denoise(noisy_values)
+    
+    print(f"ZNE result: {denoised}")
+    print(f"Error reduction: {abs(noisy_values[0] - true_value):.6f} → {abs(denoised - true_value):.6f}")
+    
+    # Get analysis
+    analysis = zne.get_zne_analysis()
+    print(f"ZNE Analysis: {analysis}")
+
+
+if __name__ == "__main__":
+    test_zne_plugin()
+
+    
 
 
 # === Optimizer Implementations ===
