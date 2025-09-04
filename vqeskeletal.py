@@ -86,19 +86,33 @@ class AnsatzPlugin:
         return True
 
     def _build_hf_state(self, mapper):
-        try:
-            self.hf_state = HartreeFock(
-                num_spin_orbitals=self.num_qubits,
-                num_particles=self.num_particles,
-                qubit_mapper=mapper
-            )
-            if self.verbose:
-                print("✓ HF state ready")
-            return True
-        except Exception as e:
-            if self.verbose:
-                print(f"HF state failed: {e}")
-            return False
+        """Build the Hartree–Fock initial state handling API differences.
+
+        qiskit-nature versions differ: older versions expect
+        HartreeFock(num_spatial_orbitals, num_particles, qubit_mapper,...)
+        while our previous attempt used the (incorrect here) keyword num_spin_orbitals.
+
+        We try the modern / documented signature first. If all attempts fail we raise
+        (NO silent fallback) because the user requested immediate fixes over fallbacks.
+        """
+        last_err = None
+        spatial_orbs = self.num_spatial_orbitals if self.num_spatial_orbitals else self.num_qubits // 2
+        # Candidate call patterns (args / kwargs) to try in order
+        attempts = [
+            ((), {"num_spatial_orbitals": spatial_orbs, "num_particles": self.num_particles, "qubit_mapper": mapper}),
+            # Some legacy forms might accept positional args only
+            ((spatial_orbs, self.num_particles, mapper), {}),
+        ]
+        for args, kwargs in attempts:
+            try:
+                self.hf_state = HartreeFock(*args, **kwargs)
+                if self.verbose:
+                    print("✓ HF state ready (HartreeFock constructed)")
+                return True
+            except Exception as e:  # capture and try next pattern
+                last_err = e
+        # If we reach here all attempts failed
+        raise RuntimeError(f"HartreeFock construction failed for all known signatures: {last_err}")
 
     def _build_uccsd_ansatz(self, mapper):
         try:
