@@ -3,17 +3,17 @@ import random
 import numpy as np 
 
 # Imports for the Hamiltonian Plugin
-from qiskit.quantum_info import SparsePauliOp
-from qiskit import QuantumCircuit
+from qiskit.quantum_info import SparsePauliOp # type: ignore
+from qiskit import QuantumCircuit   # type: ignore
 
 # The following imports require qiskit-nature and a chemistry driver like pyscf
 try:
-    from qiskit_nature.units import DistanceUnit
-    from qiskit_nature.second_q.drivers import PySCFDriver
-    from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
-    from qiskit_nature.second_q.problems import ElectronicStructureProblem
-    from qiskit_nature.second_q.mappers import JordanWignerMapper
-    from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
+    from qiskit_nature.units import DistanceUnit # type: ignore
+    from qiskit_nature.second_q.drivers import PySCFDriver  # type: ignore
+    from qiskit_nature.second_q.transformers import ActiveSpaceTransformer # type: ignore
+    from qiskit_nature.second_q.problems import ElectronicStructureProblem # type: ignore
+    from qiskit_nature.second_q.mappers import JordanWignerMapper # type: ignore
+    from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock # type: ignore
     QISKIT_NATURE_INSTALLED = True
 except ImportError:
     QISKIT_NATURE_INSTALLED = False
@@ -125,7 +125,7 @@ class AnsatzPlugin:
         fallback_circuit = QuantumCircuit(self.num_qubits)
         
         # Add some basic rotations as variational parameters
-        from qiskit.circuit import Parameter
+        from qiskit.circuit import Parameter # type: ignore
         params = []
         for i in range(self.num_qubits):
             param = Parameter(f'theta_{i}')
@@ -646,13 +646,13 @@ class VQE:
     def _setup_estimator(self):
         """Setup quantum estimator for expectation value calculation"""
         try:
-            from qiskit_aer.primitives import Estimator
+            from qiskit_aer.primitives import Estimator # type: ignore
             self.estimator = Estimator()
             if self.verbose:
                 print("✓ Quantum estimator setup complete (Qiskit Aer)")
         except ImportError:
             try:
-                from qiskit.primitives import StatevectorEstimator
+                from qiskit.primitives import StatevectorEstimator # type: ignore
                 self.estimator = StatevectorEstimator()
                 if self.verbose:
                     print("✓ Quantum estimator setup complete (Statevector)")
@@ -734,7 +734,7 @@ class VQE:
         except Exception as e:
             # Deterministic statevector fallback (no randomness) before final stochastic fallback
             try:
-                from qiskit.quantum_info import Statevector
+                from qiskit.quantum_info import Statevector # type: ignore
                 sv = Statevector.from_instruction(trial_wavefunction)
                 val = sv.expectation_value(hamiltonian)
                 return float(np.real(val))
