@@ -829,119 +829,16 @@ class VQE:
         print(f"   Parameter variance: {np.var(parameters):7.4f}")
         print(f"   RMS parameter: {np.sqrt(np.mean(parameters**2)):7.4f}")
         
-        # Show first 8 parameters
+        # Show first 8 parameters cleanly
         print(f"   Parameters:")
         for i in range(0, min(len(parameters), 8), 4):
             end_idx = min(i+4, len(parameters))
             param_group = parameters[i:end_idx]
             param_strs = [f"θ[{j:2d}]={param:7.4f}" for j, param in enumerate(param_group, i)]
             print(f"     {' '.join(param_strs)}")
-        
         if len(parameters) > 8:
             print(f"     ... and {len(parameters)-8} more parameters")
-        
         print("   " + "="*50)
-
-    def run(self, initial_params=None):
-        """
-        Run VQE algorithm with enhanced monitoring
-        
-        Args:
-            initial_params: Initial variational parameters (optional)
-            
-        Returns:
-            tuple: (optimized_parameters, final_energy)
-        """
-        print("\n🚀 Starting VQE algorithm for NH3...")
-        print("="*80)
-        
-        ansatz_info = self.ansatz_plugin.get_ansatz_info()
-        
-        # Validate system readiness
-        if not ansatz_info['vqe_ready']:
-            print("❌ VQE cannot run - ansatz not ready")
-            return None, None
-        
-        if ansatz_info['num_parameters'] == 0:
-            print("❌ No variational parameters - cannot optimize")
-            return None, None
-        
-        # System information
-        print(f"📋 VQE System Information:")
-        print(f"   Molecule: NH3 (Ammonia)")
-        print(f"   Qubits: {ansatz_info['num_qubits']}")
-        print(f"   Variational parameters: {ansatz_info['num_parameters']}")
-        print(f"   Circuit depth: {ansatz_info['circuit_depth']}")
-        print(f"   Basis: {ansatz_info['basis']}")
-        
-        # Get initial parameters if not provided
-        if initial_params is None:
-            initial_params = self.ansatz_plugin.get_initial_parameters("random_small")
-            print(f"✓ Generated {len(initial_params)} initial parameters")
-        
-        print(f"\n🎯 Starting optimization...")
-        print("="*80)
-        
-        try:
-            # Run optimization with the classical optimizer plugin
-            optimized_params = self.optimizer_plugin.optimize(self.objective_function, initial_params)
-            
-            print("\n" + "🎉"*20)
-            print("✅ VQE OPTIMIZATION COMPLETE!")
-            print("🎉"*20)
-            
-            # Get final energy
-            final_energy = self.objective_function(optimized_params)
-            
-            print(f"🎯 Final Results:")
-            print(f"   Ground state energy: {final_energy:.8f} Hartree")
-            print(f"   Ground state energy: {final_energy * 627.509:.4f} kcal/mol")
-            print(f"   Total iterations: {self.iteration_count}")
-            
-            # Energy improvement summary
-            if len(self.energy_history) > 1:
-                total_improvement = self.energy_history[0] - final_energy
-                print(f"   Total energy improvement: {total_improvement:.8f} Hartree")
-                print(f"   Total energy improvement: {total_improvement*627.509:.4f} kcal/mol")
-            
-            return optimized_params, final_energy
-            
-        except NotImplementedError:
-            print("❌ Classical optimizer not implemented")
-            print("💡 Please implement the ClassicalOptimizerPlugin.optimize() method")
-            return None, None
-        except Exception as e:
-            print(f"❌ VQE optimization failed: {e}")
-            return None, None
-
-
-# Example usage with a dummy optimizer for testing
-class DummyOptimizer:
-    """Dummy optimizer for testing - replace with real optimizer"""
-    def __init__(self, max_iter=10):
-        self.max_iter = max_iter
-        
-    def optimize(self, objective_function, initial_params):
-        print(f"🔧 Running dummy optimization for {self.max_iter} iterations...")
-        
-        current_params = initial_params.copy()
-        best_energy = objective_function(current_params)
-        best_params = current_params.copy()
-        
-        for i in range(self.max_iter - 1):  # -1 because we already called objective_function once
-            # Simple parameter perturbation
-            perturbation = np.random.normal(0, 0.01, len(current_params))
-            current_params = current_params + perturbation
-            
-            # Evaluate energy
-            energy = objective_function(current_params)
-            
-            # Keep best result
-            if energy < best_energy:
-                best_energy = energy
-                best_params = current_params.copy()
-        
-        return best_params
 
 
 # Test function
