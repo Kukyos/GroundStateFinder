@@ -463,6 +463,161 @@ class ZNEDenoiserPlugin:
         return noisy_results
 
 
+# === Optimizer Implementations ===
+class SPSAOptimizer(ClassicalOptimizerPlugin):
+    """Simplified SPSA optimizer.
+
+    NOTE: This is a lightweight implementation suitable for early, noisy exploration.
+    It purposefully keeps configuration minimal. Parameters follow conventional SPSA
+    decay schedules (a_k, c_k).
+    """
+    def __init__(self, max_iter=40, a=0.2, c=0.15, alpha=0.602, gamma=0.101, tol=1e-3, seed=None, verbose=True):
+        self.max_iter = max_iter
+        self.a = a
+        self.c = c
+        self.alpha = alpha
+        self.gamma = gamma
+        self.tol = tol
+        self.rng = np.random.default_rng(seed)
+        self.verbose = verbose
+
+    def _ak(self, k):
+        return self.a / (k ** self.alpha)
+
+    def _ck(self, k):
+        return self.c / (k ** self.gamma)
+
+    def optimize(self, objective_function, initial_params):
+        params = np.array(initial_params, dtype=float)
+        prev_val = objective_function(params)
+        best_val = prev_val
+        best_params = params.copy()
+        if self.verbose:
+            print(f"[SPSA] Initial energy: {prev_val}")
+        for k in range(1, self.max_iter + 1):
+            ak = self._ak(k)
+            ck = self._ck(k)
+            delta = self.rng.choice([-1, 1], size=params.shape)
+            plus = params + ck * delta
+            minus = params - ck * delta
+            e_plus = objective_function(plus)
+            e_minus = objective_function(minus)
+            # Gradient estimate (vector)
+            gk = (e_plus - e_minus) / (2.0 * ck) * delta
+            params = params - ak * gk
+            curr_val = objective_function(params)
+            if curr_val < best_val:
+                best_val = curr_val
+                best_params = params.copy()
+            if self.verbose:
+                impr = prev_val - curr_val
+                print(f"[SPSA] iter={k:3d} energy={curr_val:.8f} ΔE={impr:.3e} ak={ak:.3e} ck={ck:.3e}")
+            if abs(prev_val - curr_val) < self.tol:
+                if self.verbose:
+                    print(f"[SPSA] Converged (|ΔE| < {self.tol}) at iter {k}")
+                break
+            prev_val = curr_val
+        return best_params
+
+
+class COBYLAOptimizer(ClassicalOptimizerPlugin):
+    """Wrapper around SciPy COBYLA with graceful fallback if SciPy unavailable."""
+    def __init__(self, max_iter=200, tol=1e-6, rhobeg=0.2, disp=True):
+        self.max_iter = max_iter
+        self.tol = tol
+        self.rhobeg = rhobeg
+        self.disp = disp
+
+    def optimize(self, objective_function, initial_params):
+        try:
+            from scipy.optimize import minimize
+            result = minimize(
+                objective_function,
+                np.array(initial_params, dtype=float),
+                method="COBYLA",
+                options={"maxiter": self.max_iter, "tol": self.tol, "disp": self.disp, "rhobeg": self.rhobeg},
+            )
+            return result.x
+        except Exception as e:  # SciPy missing or failure -> simple fallback
+            print(f"[COBYLAOptimizer] Fallback in use ({e}). Using coordinate descent.")
+            params = np.array(initial_params, dtype=float)
+            best = objective_function(params)
+            step = self.rhobeg
+            for _ in range(self.max_iter):
+                improved = False
+                for i in range(len(params)):
+                    for direction in (+1, -1):
+                        trial = params.copy()
+                        trial[i] += direction * step
+                        val = objective_function(trial)
+                        if val < best - self.tol:
+                            best = val
+                            params = trial
+                            improved = True
+                if not improved:
+                    step *= 0.5
+                    if step < self.tol:
+                        break
+            return params
+
+
+class HybridSPSAThenCOBYLA(ClassicalOptimizerPlugin):
+    """Hybrid optimizer: coarse SPSA phase followed by COBYLA fine tuning.
+
+    switch_tol: energy improvement threshold (absolute) below which we switch.
+    min_spsa: minimum SPSA iterations before checking switch criterion.
+    force_cobyla: if True, always run COBYLA after SPSA phase regardless of improvement.
+    """
+    def __init__(
+        self,
+        spsa_iters=40,
+        spsa_a=0.2,
+        spsa_c=0.15,
+        switch_tol=5e-3,
+        min_spsa=10,
+        force_cobyla=False,
+        cobyla_max_iter=150,
+        verbose=True,
+    ):
+        self.spsa_iters = spsa_iters
+        self.switch_tol = switch_tol
+        self.min_spsa = min_spsa
+        self.force_cobyla = force_cobyla
+        self.verbose = verbose
+        self._spsa = SPSAOptimizer(max_iter=spsa_iters, a=spsa_a, c=spsa_c, tol=switch_tol/5, verbose=verbose)
+        self._cobyla = COBYLAOptimizer(max_iter=cobyla_max_iter, tol=1e-6, disp=verbose)
+
+    def optimize(self, objective_function, initial_params):
+        if self.verbose:
+            print(f"[Hybrid] Starting SPSA (max_iter={self.spsa_iters}) -> COBYLA (switch_tol={self.switch_tol})")
+        # Wrap objective to record energies
+        energy_log = []
+        def logging_objective(p):
+            val = objective_function(p)
+            energy_log.append(val)
+            return val
+        # Run SPSA
+        params_after_spsa = self._spsa.optimize(logging_objective, initial_params)
+        # Decide on switch
+        do_cobyla = self.force_cobyla
+        if not do_cobyla and len(energy_log) >= 2:
+            recent_impr = abs(energy_log[-2] - energy_log[-1])
+            if len(energy_log) >= self.min_spsa:
+                do_cobyla = (recent_impr < self.switch_tol)
+        if self.verbose:
+            if do_cobyla:
+                print(f"[Hybrid] Switching to COBYLA (recent |ΔE|={abs(energy_log[-2]-energy_log[-1]):.3e})")
+            else:
+                print(f"[Hybrid] Skipping COBYLA (recent improvement adequate: {abs(energy_log[-2]-energy_log[-1]):.3e})")
+        if do_cobyla:
+            params_final = self._cobyla.optimize(logging_objective, params_after_spsa)
+        else:
+            params_final = params_after_spsa
+        if self.verbose:
+            print(f"[Hybrid] Completed. Total energy evaluations: {len(energy_log)}")
+        return params_final
+
+
 # CORRECTED VQE CLASS - Fixed critical weaknesses
 class VQE:
     """
@@ -572,7 +727,21 @@ class VQE:
         """
         # Get quantum expectation value
         noisy_value = self._get_expectation_value(parameters)
-        
+        # Coerce PubResult / EstimatorResult-like objects to float when possible
+        try:
+            if hasattr(noisy_value, 'data') and hasattr(noisy_value.data, 'values'):
+                # Qiskit EstimatorResult style
+                maybe = noisy_value.data.values
+                if isinstance(maybe, (list, tuple)) and maybe:
+                    noisy_value = float(maybe[0])
+            elif hasattr(noisy_value, 'result') and hasattr(noisy_value.result, 'data'):
+                noisy_value = float(noisy_value.result.data)  # generic attempt
+        except Exception:
+            try:
+                noisy_value = float(noisy_value)
+            except Exception:
+                pass  # leave as-is; downstream may raise
+
         # Apply error mitigation
         denoised_value = self.zne_plugin.denoise(noisy_value)
         
@@ -732,7 +901,8 @@ def test_corrected_vqe():
     # Initialize plugins
     hamiltonian_plugin = HamiltonianPlugin()
     ansatz_plugin = AnsatzPlugin(verbose=True)
-    optimizer_plugin = DummyOptimizer(max_iter=5)  # Replace with real optimizer
+    # Use hybrid optimizer by default for test
+    optimizer_plugin = HybridSPSAThenCOBYLA(spsa_iters=15, switch_tol=5e-3, min_spsa=8, force_cobyla=True, verbose=True)
     zne_plugin = ZNEDenoiserPlugin()
     
     # Create and run VQE
