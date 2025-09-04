@@ -840,6 +840,60 @@ class VQE:
             print(f"     ... and {len(parameters)-8} more parameters")
         print("   " + "="*50)
 
+    def run(self, initial_params=None, init_type="zero"):
+        """Execute the VQE optimization loop.
+
+        Args:
+            initial_params (array-like | None): Optional user-specified initial parameter vector.
+            init_type (str): If initial_params is None, strategy passed to ansatz_plugin.get_initial_parameters().
+
+        Returns:
+            (best_params: np.ndarray, best_energy: float)
+        """
+        if not self.ansatz_plugin.is_built:
+            raise RuntimeError("Ansatz not built; initialization failed earlier.")
+
+        # Prepare initial parameters
+        if initial_params is None:
+            initial_params = self.ansatz_plugin.get_initial_parameters(init_type=init_type)
+        else:
+            initial_params = np.array(initial_params, dtype=float)
+            if len(initial_params) != self.ansatz_plugin.num_parameters:
+                raise ValueError(
+                    f"Initial parameter length {len(initial_params)} does not match ansatz parameter count {self.ansatz_plugin.num_parameters}."
+                )
+
+        if self.verbose:
+            print("\n🚀 Starting VQE optimization run")
+            print(f"   Parameter count: {len(initial_params)}")
+            print(f"   Optimizer: {self.optimizer_plugin.__class__.__name__}")
+
+        # Edge case: no variational parameters
+        if len(initial_params) == 0:
+            energy = self.objective_function(np.array([]))
+            if self.verbose:
+                print("   (No parameters to optimize – single evaluation performed)")
+            return np.array([]), energy
+
+        # Run optimizer
+        best_params = self.optimizer_plugin.optimize(self.objective_function, initial_params)
+
+        # Ensure we have energy for returned params (optimizer may store best earlier)
+        try:
+            current_energy = self.objective_function(best_params)
+        except Exception:
+            # Fallback to last recorded energy
+            current_energy = self.energy_history[-1] if self.energy_history else float('nan')
+
+        if self.verbose:
+            print("\n🏁 VQE optimization complete")
+            print(f"   Final energy: {current_energy:.10f} Hartree")
+            if len(self.energy_history) >= 2:
+                print(f"   Total improvement: {self.energy_history[0] - current_energy:.6f} Hartree")
+            print(f"   Evaluations: {self.iteration_count}")
+
+        return np.array(best_params, dtype=float), float(current_energy)
+
 
 # Test function
 def test_corrected_vqe():
