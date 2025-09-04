@@ -364,10 +364,10 @@ class HamiltonianPlugin:
 
     def __init__(self):
         self.geom = (
-            "N  0.0000  0.0000  0.0000;"
-            " H  0.9377  0.0000 -0.3816;"
-            " H -0.4688  0.8119 -0.3816;"
-            " H -0.4688 -0.8119 -0.3816"
+            
+    "H 0.000000 0.000000 0.000000",
+    "H 0.000000 0.000000 0.740000"
+
         )
         self._hamiltonian = None
         self._problem_active = None
@@ -749,3 +749,4 @@ def test_corrected_vqe():
 
 if __name__ == "__main__":
     test_corrected_vqe()
+
