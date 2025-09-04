@@ -697,40 +697,75 @@ class VQE:
                 job = self.estimator.run([(trial_wavefunction, hamiltonian)])
             result = job.result()
 
-            # Robust extraction helper
-            def _extract(res):
-                # EstimatorResult (qiskit 2.x)
-                if hasattr(res, 'values') and isinstance(res.values, (list, tuple)) and res.values:
-                    return res.values[0]
-                # PubResult container (internal) -> iterate pub_results
-                if hasattr(res, 'pub_results'):
-                    prs = getattr(res, 'pub_results')
-                    if isinstance(prs, (list, tuple)) and prs:
-                        pr0 = prs[0]
-                        # New style: pr0.data.evs (list of expectation values)
-                        if hasattr(pr0, 'data') and hasattr(pr0.data, 'evs') and pr0.data.evs:
-                            return pr0.data.evs[0]
-                        # Sometimes pr0.data may have .values
-                        if hasattr(pr0, 'data') and hasattr(pr0.data, 'values') and pr0.data.values:
-                            return pr0.data.values[0]
-                # Legacy eigenvalue field
-                if hasattr(res, 'eigenvalue'):
-                    return res.eigenvalue
-                # Fallback: first element if subscriptable
+            def unwrap(obj, depth=0):
+                """Recursively unwrap estimator / pub result structures to get a numeric expectation value."""
+                if depth > 6:
+                    raise ValueError("Exceeded unwrap recursion depth")
+                # Direct numeric
+                if isinstance(obj, (int, float)):
+                    return float(obj)
+                # Arrays / lists / tuples
+                if isinstance(obj, (list, tuple)) and obj:
+                    # Try to unwrap first meaningful element
+                    return unwrap(obj[0], depth+1)
+                # Numpy scalar
                 try:
-                    return res[0]
+                    import numpy as _np
+                    if isinstance(obj, _np.generic):
+                        return float(obj)
                 except Exception:
                     pass
-                raise ValueError("Could not extract expectation value from estimator result")
+                # EstimatorResult (values attribute)
+                if hasattr(obj, 'values') and isinstance(getattr(obj, 'values'), (list, tuple)) and obj.values:
+                    return unwrap(obj.values[0], depth+1)
+                # PubResults container
+                if hasattr(obj, 'pub_results'):
+                    prs = getattr(obj, 'pub_results')
+                    if isinstance(prs, (list, tuple)) and prs:
+                        return unwrap(prs[0], depth+1)
+                # PubResult with data field
+                if hasattr(obj, 'data'):
+                    data = getattr(obj, 'data')
+                    # Common patterns: evs, values, expectation, eigenvalue(s)
+                    for attr in ('evs', 'values', 'expectation', 'eigenvalues', 'eigenvalue'):
+                        if hasattr(data, attr):
+                            val = getattr(data, attr)
+                            return unwrap(val, depth+1)
+                # Fallback: if object is indexable, try index 0
+                try:
+                    return unwrap(obj[0], depth+1)
+                except Exception:
+                    pass
+                raise TypeError(f"Cannot unwrap expectation from object of type {type(obj)}")
 
-            expectation = _extract(result)
-            return float(np.real(expectation))
+            expectation = unwrap(result)
+            return float(expectation)
 
         except Exception as e:
             if self.verbose:
-                print(f"⚠ Quantum simulation error (robust path): {type(e).__name__}: {e}")
-                print("  Falling back to classical simulation estimate (stochastic mock value)")
-            return -5.0 + np.random.normal(0, 0.1)  # Mock fallback
+                print(f"⚠ Quantum simulation error (final unwrap path): {type(e).__name__}: {e}")
+                # One-time detailed debug dump (guard by attribute)
+                if not hasattr(self, '_debug_dump_done'):
+                    self._debug_dump_done = True
+                    try:
+                        print("--- Estimator result debug (attributes) ---")
+                        r = locals().get('result', None)
+                        if r is not None:
+                            print('result type:', type(r))
+                            print('dir(result)[:25]:', sorted(dir(r))[:25])
+                            if hasattr(r, 'pub_results'):
+                                prs = getattr(r, 'pub_results')
+                                print('pub_results type:', type(prs), 'len:', (len(prs) if isinstance(prs,(list,tuple)) else 'n/a'))
+                                if isinstance(prs, (list, tuple)) and prs:
+                                    pr0 = prs[0]
+                                    print('pub_result[0] type:', type(pr0))
+                                    if hasattr(pr0, 'data'):
+                                        d = pr0.data
+                                        print('pub_result[0].data attrs:', [a for a in dir(d) if not a.startswith('__')][:25])
+                    except Exception as de:
+                        print('Debug dump failed:', de)
+                print("  Falling back to stochastic mock value")
+            return -5.0 + np.random.normal(0, 0.1)
 
     def objective_function(self, parameters):
         """
