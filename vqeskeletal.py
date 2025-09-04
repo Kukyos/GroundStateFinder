@@ -430,10 +430,48 @@ class HamiltonianPlugin:
                     mol.build(atom=geom_str, basis='sto-3g', unit='Angstrom')
                     mf = scf.RHF(mol)
                     e_hf = mf.kernel()
-                    # Minimal placeholder: construct constant energy operator with identity term
-                    # so expectation gives HF energy baseline; real mapping requires integrals mapping.
-                    ham_active = SparsePauliOp(['I'* (mol.nao*2)], [e_hf])
-                    print(f'[Info] Direct PySCF HF energy = {e_hf:.6f} Hartree (identity operator placeholder)')
+                    from qiskit.quantum_info import SparsePauliOp as _SPO  # type: ignore
+                    # Build simple diagonal (number-operator) Hamiltonian approximation:
+                    # H ≈ C + Σ_p ε_p n_p where n_p = (I - Z_p)/2 and ε_p are orbital energies.
+                    # Choose an active subset (first n_orb spatial -> 2*n_orb spin orbitals) matching expected qubit count (=6).
+                    mo_energies = list(mf.mo_energy)
+                    n_spatial_target = 3  # keep consistent with earlier active space assumption
+                    if len(mo_energies) < n_spatial_target:
+                        n_spatial_target = len(mo_energies)
+                    active_eps = mo_energies[:n_spatial_target]
+                    # Duplicate for alpha/beta spin
+                    spin_eps = []
+                    for eps in active_eps:
+                        spin_eps.extend([float(eps), float(eps)])
+                    num_qubits = len(spin_eps)
+                    # HF occupation pattern: fill lowest electrons (4 electrons -> 2 alpha + 2 beta => 4 spin orbitals)
+                    n_electrons = 4
+                    occ_indices = list(range(n_electrons))
+                    sum_eps_occ = sum(spin_eps[i] for i in occ_indices)
+                    # Constant shift so HF expectation yields e_hf
+                    # Expectation of Σ ε_p n_p for HF occ = sum_eps_occ
+                    const_shift = e_hf - sum_eps_occ
+                    paulis = []
+                    coeffs = []
+                    # Constant term
+                    paulis.append('I'*num_qubits)
+                    coeffs.append(const_shift)
+                    # Terms: ε_p/2 * I and -ε_p/2 * Z_p combined => we already added constant shift, so add ε_p/2 to constant
+                    # Implement as separate (I) and (-Z_p) terms per orbital for clarity
+                    for p, eps in enumerate(spin_eps):
+                        # Add (eps/2) * I
+                        paulis.append('I'*num_qubits)
+                        coeffs.append(eps/2.0)
+                        # Add (-eps/2) * Z_p
+                        z_string = ['I']*num_qubits
+                        z_string[p] = 'Z'
+                        paulis.append(''.join(z_string))
+                        coeffs.append(-eps/2.0)
+                    ham_active = _SPO(paulis, coeffs)
+                    print(f'[Info] Direct PySCF HF energy = {e_hf:.6f} Hartree (diagonal orbital-energy Hamiltonian)')
+                    print('[Info] Using simplified diagonal Hamiltonian (no two-electron correlations).')
+                    # Disable synthetic padding for this diagonal model to keep operator sparse
+                    self.PAD_SYNTHETIC = False
                     self.is_fallback = True  # still not full mapped Hamiltonian
                 except Exception as de2:
                     direct_pyscf_failed = True
