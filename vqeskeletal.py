@@ -1,4 +1,4 @@
-import mathimport math
+import math
 import random 
 import numpy as np 
 
