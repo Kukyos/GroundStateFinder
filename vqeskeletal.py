@@ -363,15 +363,26 @@ class HamiltonianPlugin:
     SYN_COEFF_SCALE = 1e-8
 
     def __init__(self):
-        self.geom = (
-            
-    "H 0.000000 0.000000 0.000000",
-    "H 0.000000 0.000000 0.740000"
-
-        )
+        # Default to a reasonable NH3 geometry (approximate, Angstroms)
+        # If you want H2 instead, replace with ["H 0 0 0", "H 0 0 0.74"] or multiline string.
+        self.geom = [
+            "N 0.000000 0.000000 0.000000",
+            "H 0.000000 0.937700 -0.381600",
+            "H 0.812100 -0.468800 -0.381600",
+            "H -0.812100 -0.468800 -0.381600"
+        ]
         self._hamiltonian = None
         self._problem_active = None
         self._mapper = None
+
+    def _normalize_geometry(self, geom):
+        """Return geometry in a PySCFDriver-acceptable form (string or list[str])."""
+        if isinstance(geom, str):
+            return geom
+        if isinstance(geom, (list, tuple)):
+            if all(isinstance(x, str) for x in geom):
+                return "\n".join(geom)
+        raise ValueError("Geometry must be str or sequence of str specifications.")
 
     def get_hamiltonian(self):
         """
@@ -392,7 +403,8 @@ class HamiltonianPlugin:
             if not QISKIT_NATURE_INSTALLED:
                 raise ImportError("Qiskit Nature or its dependencies are not installed.")
 
-            driver = PySCFDriver(atom=self.geom, basis='sto3g', charge=0, spin=0, unit=DistanceUnit.ANGSTROM)
+            atom_spec = self._normalize_geometry(self.geom)
+            driver = PySCFDriver(atom=atom_spec, basis='sto3g', charge=0, spin=0, unit=DistanceUnit.ANGSTROM)
             problem_full = ElectronicStructureProblem(driver)
             transformer = ActiveSpaceTransformer(num_electrons=4, num_spatial_orbitals=3)
             self._problem_active = transformer.transform(problem_full)
@@ -406,6 +418,10 @@ class HamiltonianPlugin:
 
         except Exception as e:
             print(f'[Warning] Ab initio build failed: {e}. Using a fallback 6-qubit operator.')
+            if not QISKIT_NATURE_INSTALLED:
+                print('[Info] qiskit-nature not detected. Install with: pip install qiskit-nature pyscf')
+            else:
+                print('[Info] Check geometry formatting or PySCF availability.')
             paulis = ['IIIIII', 'ZIIIZZ', 'ZZIIZZ', 'IZZIIZ', 'IIZZZZ', 'XXYYZZ', 'YYXXZZ']
             coeffs = [-5.0, 0.12, -0.08, 0.05, -0.03, 0.01, 0.01]
             ham_active = SparsePauliOp(paulis, coeffs)
