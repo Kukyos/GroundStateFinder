@@ -1025,6 +1025,9 @@ class HybridSPSAThenCOBYLA(ClassicalOptimizerPlugin):
         min_spsa=10,
         force_cobyla=False,
         cobyla_max_iter=150,
+        ma_window=5,
+        rel_switch_frac=1e-4,
+        plateau_iters=3,
         verbose=True,
     ):
         self.spsa_iters = spsa_iters
@@ -1034,6 +1037,10 @@ class HybridSPSAThenCOBYLA(ClassicalOptimizerPlugin):
         self.verbose = verbose
         self._spsa = SPSAOptimizer(max_iter=spsa_iters, a=spsa_a, c=spsa_c, tol=switch_tol/5, verbose=verbose)
         self._cobyla = COBYLAOptimizer(max_iter=cobyla_max_iter, tol=1e-6, disp=verbose)
+        # Adaptive switching controls
+        self.ma_window = ma_window              # Moving-average window of last improvements
+        self.rel_switch_frac = rel_switch_frac  # Relative (to |E|) MA improvement threshold
+        self.plateau_iters = plateau_iters      # Consecutive tiny-improvement steps to qualify as plateau
 
     def optimize(self, objective_function, initial_params):
         if self.verbose:
@@ -1048,19 +1055,38 @@ class HybridSPSAThenCOBYLA(ClassicalOptimizerPlugin):
         params_after_spsa = self._spsa.optimize(logging_objective, initial_params)
         # Decide on switch
         do_cobyla = self.force_cobyla
-        if not do_cobyla and len(energy_log) >= 2:
-            recent_impr = abs(energy_log[-2] - energy_log[-1])
-            if len(energy_log) >= self.min_spsa:
-                do_cobyla = (recent_impr < self.switch_tol)
+        recent_impr = float('inf')
+        ma_impr = float('inf')
+        rel_ma = float('inf')
+        plateau = False
+        if len(energy_log) >= 2:
+            improvements = [abs(energy_log[i-1] - energy_log[i]) for i in range(1, len(energy_log))]
+            recent_impr = improvements[-1]
+            window = improvements[-self.ma_window:]
+            if window:
+                ma_impr = sum(window) / len(window)
+            if abs(energy_log[-1]) > 1e-12:
+                rel_ma = ma_impr / abs(energy_log[-1])
+            # Plateau: last plateau_iters improvements all below switch_tol
+            if len(improvements) >= self.plateau_iters:
+                plateau = all(imp < self.switch_tol for imp in improvements[-self.plateau_iters:])
+            if not do_cobyla:
+                if len(energy_log) >= self.min_spsa:
+                    # Switch if moving-average AND relative thresholds met OR plateau
+                    if (ma_impr < self.switch_tol and rel_ma < self.rel_switch_frac) or plateau:
+                        do_cobyla = True
+        if self.verbose and len(energy_log) >= 2:
+            print(f"[Hybrid] Decision metrics: last={recent_impr:.3e} ma={ma_impr:.3e} rel_ma={rel_ma:.3e} plateau={plateau}")
         if self.verbose:
-            if do_cobyla:
-                print(f"[Hybrid] Switching to COBYLA (recent |ΔE|={abs(energy_log[-2]-energy_log[-1]):.3e})")
-            else:
-                print(f"[Hybrid] Skipping COBYLA (recent improvement adequate: {abs(energy_log[-2]-energy_log[-1]):.3e})")
-        if do_cobyla:
-            params_final = self._cobyla.optimize(logging_objective, params_after_spsa)
-        else:
-            params_final = params_after_spsa
+            if do_cobyla and len(energy_log) >= 2:
+                try:
+                    print("[Hybrid] Switching to COBYLA in 5 seconds...")
+                    import time; time.sleep(5)
+                except Exception:
+                    print("[Hybrid] (Sleep skipped)")
+            elif not do_cobyla and len(energy_log) >= 2:
+                print("[Hybrid] Staying with SPSA result (criteria not met for fine-tune).")
+        params_final = self._cobyla.optimize(logging_objective, params_after_spsa) if do_cobyla else params_after_spsa
         if self.verbose:
             print(f"[Hybrid] Completed. Total energy evaluations: {len(energy_log)}")
         return params_final
