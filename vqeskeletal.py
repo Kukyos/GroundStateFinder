@@ -1116,11 +1116,14 @@ class VQE:
         
         # Setup quantum estimator
         self._setup_estimator()
-    # Adaptive ZNE controls (inside __init__)
-        self.zne_improvement_tol = 1e-4  # Hartree threshold below which improvement counts as "no improvement"
-        self.zne_patience = 10           # Consecutive no-improvement iterations before disabling multi-noise
-        self.zne_no_improve_streak = 0   # Counter
-        self.zne_disabled = False        # Flag once multi-noise is turned off
+    # Adaptive ZNE controls (inside __init__). By default adaptive disabling is OFF to retain
+    # original behaviour (never auto-collapse noise_factors). Set zne_adaptive_enable=True in
+    # notebook AFTER constructing VQE if you want auto-disable.
+        self.zne_adaptive_enable = False     # Master switch
+        self.zne_improvement_tol = 1e-4      # Hartree threshold considered "no improvement"
+        self.zne_patience = 10               # Consecutive no-improvement iterations before disabling
+        self.zne_no_improve_streak = 0       # Counter
+        self.zne_disabled = False            # Flag once multi-noise is turned off
 
     def _setup_estimator(self):
         """Setup quantum estimator for expectation value calculation"""
@@ -1278,7 +1281,8 @@ class VQE:
         self.last_noisy_samples = noisy_values if multi_noise else [noisy_input]
 
         # Adaptive ZNE disable logic
-        if multi_noise and hasattr(self.zne_plugin, 'zne_history') and self.zne_plugin.zne_history:
+        if (self.zne_adaptive_enable and multi_noise and
+            hasattr(self.zne_plugin, 'zne_history') and self.zne_plugin.zne_history):
             last_record = self.zne_plugin.zne_history[-1]
             improvement = last_record.get('improvement', 0.0)
             if improvement < self.zne_improvement_tol:
