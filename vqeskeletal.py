@@ -1203,25 +1203,48 @@ class VQE:
         Returns:
             float: Energy to minimize
         """
-        # Get quantum expectation value
-        noisy_value = self._get_expectation_value(parameters)
-        # Coerce PubResult / EstimatorResult-like objects to float when possible
-        try:
-            if hasattr(noisy_value, 'data') and hasattr(noisy_value.data, 'values'):
-                # Qiskit EstimatorResult style
-                maybe = noisy_value.data.values
-                if isinstance(maybe, (list, tuple)) and maybe:
-                    noisy_value = float(maybe[0])
-            elif hasattr(noisy_value, 'result') and hasattr(noisy_value.result, 'data'):
-                noisy_value = float(noisy_value.result.data)  # generic attempt
-        except Exception:
-            try:
-                noisy_value = float(noisy_value)
-            except Exception:
-                pass  # leave as-is; downstream may raise
+        hamiltonian = self.hamiltonian_system['hamiltonian_active']
+        noise_factors = getattr(self.zne_plugin, 'noise_factors', [1.0]) or [1.0]
 
-        # Apply error mitigation
-        denoised_value = self.zne_plugin.denoise(noisy_value)
+        # Build trial once
+        trial_wavefunction = self.ansatz_plugin.get_trial_wavefunction(parameters)
+
+        multi_noise = len(noise_factors) > 1
+        noisy_values = []
+        if multi_noise:
+            # Multi-noise sampling: create folded circuits per factor
+            for nf in noise_factors:
+                if nf == 1.0:
+                    circ = trial_wavefunction
+                else:
+                    try:
+                        circ = self.zne_plugin.create_noisy_circuit(trial_wavefunction, nf)
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"[ZNE] Folding failed for factor {nf} ({e}); using original circuit.")
+                        circ = trial_wavefunction
+                val = self._simulate_measurement(circ, hamiltonian)
+                # Coerce numeric
+                try:
+                    val = float(val)
+                except Exception:
+                    pass
+                noisy_values.append(val)
+            if self.verbose:
+                print(f"[ZNE] Raw noisy values @ factors {noise_factors}: {noisy_values}")
+            noisy_input = noisy_values
+        else:
+            # Single-factor (legacy) path
+            single_val = self._simulate_measurement(trial_wavefunction, hamiltonian)
+            try:
+                single_val = float(single_val)
+            except Exception:
+                pass
+            noisy_input = single_val
+
+        denoised_value = self.zne_plugin.denoise(noisy_input)
+        # Optionally retain last raw samples for external summary
+        self.last_noisy_samples = noisy_values if multi_noise else [noisy_input]
         
         # Track iteration progress
         self.iteration_count += 1
