@@ -1090,6 +1090,11 @@ class VQE:
         
         # Setup quantum estimator
         self._setup_estimator()
+    # Adaptive ZNE controls (inside __init__)
+        self.zne_improvement_tol = 1e-4  # Hartree threshold below which improvement counts as "no improvement"
+        self.zne_patience = 10           # Consecutive no-improvement iterations before disabling multi-noise
+        self.zne_no_improve_streak = 0   # Counter
+        self.zne_disabled = False        # Flag once multi-noise is turned off
 
     def _setup_estimator(self):
         """Setup quantum estimator for expectation value calculation"""
@@ -1245,6 +1250,23 @@ class VQE:
         denoised_value = self.zne_plugin.denoise(noisy_input)
         # Optionally retain last raw samples for external summary
         self.last_noisy_samples = noisy_values if multi_noise else [noisy_input]
+
+        # Adaptive ZNE disable logic
+        if multi_noise and hasattr(self.zne_plugin, 'zne_history') and self.zne_plugin.zne_history:
+            last_record = self.zne_plugin.zne_history[-1]
+            improvement = last_record.get('improvement', 0.0)
+            if improvement < self.zne_improvement_tol:
+                self.zne_no_improve_streak += 1
+            else:
+                self.zne_no_improve_streak = 0
+            if (not self.zne_disabled and
+                self.zne_no_improve_streak >= self.zne_patience and
+                len(getattr(self.zne_plugin, 'noise_factors', [])) > 1):
+                # Disable further multi-noise sampling
+                self.zne_plugin.noise_factors = [1.0]
+                self.zne_disabled = True
+                if self.verbose:
+                    print(f"[ZNE] Disabled multi-noise after {self.zne_no_improve_streak} consecutive < {self.zne_improvement_tol:.1e} improvements.")
         
         # Track iteration progress
         self.iteration_count += 1
