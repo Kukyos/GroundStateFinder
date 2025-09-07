@@ -1116,6 +1116,13 @@ class VQE:
         
         # Setup quantum estimator
         self._setup_estimator()
+        
+        # Track any fallbacks used during the run
+        self.fallback_flags = {
+            'hamiltonian': bool(self.hamiltonian_system.get('fallback', False)),
+            'estimator_to_statevector': False,
+            'mock_energy': False,
+        }
     # Adaptive ZNE controls (inside __init__). By default adaptive disabling is OFF to retain
     # original behaviour (never auto-collapse noise_factors). Set zne_adaptive_enable=True in
     # notebook AFTER constructing VQE if you want auto-disable.
@@ -1219,12 +1226,21 @@ class VQE:
                 from qiskit.quantum_info import Statevector # type: ignore
                 sv = Statevector.from_instruction(trial_wavefunction)
                 val = sv.expectation_value(hamiltonian)
+                # Record fallback
+                try:
+                    self.fallback_flags['estimator_to_statevector'] = True
+                except Exception:
+                    pass
                 return float(np.real(val))
             except Exception as e2:
                 if self.verbose:
                     print(f"⚠ Quantum simulation error (estimator): {e}")
                     print(f"⚠ Statevector fallback failed: {e2}")
                     print("  Falling back to stochastic mock value")
+                try:
+                    self.fallback_flags['mock_energy'] = True
+                except Exception:
+                    pass
                 return -5.0 + np.random.normal(0, 0.1)
 
     def objective_function(self, parameters):
@@ -1392,6 +1408,21 @@ class VQE:
             if len(self.energy_history) >= 2:
                 print(f"   Total improvement: {self.energy_history[0] - current_energy:.6f} Hartree")
             print(f"   Evaluations: {self.iteration_count}")
+            # BIG banner if any fallback paths were used
+            try:
+                if any(self.fallback_flags.values()):
+                    print("\n" + "!"*90)
+                    print("!!! FALLBACK PATH USED — CHECK SETUP AND DEPENDENCIES !!!")
+                    print("!"*90)
+                    if self.fallback_flags.get('hamiltonian'):
+                        print("- Hamiltonian fallback: synthetic operator used (ab initio build failed).")
+                    if self.fallback_flags.get('estimator_to_statevector'):
+                        print("- Estimator fallback: Aer Estimator failed; Statevector path was used.")
+                    if self.fallback_flags.get('mock_energy'):
+                        print("- Measurement fallback: both Estimator and Statevector failed; mock energy returned.")
+                    print("!"*90 + "\n")
+            except Exception:
+                pass
 
         return np.array(best_params, dtype=float), float(current_energy)
 
