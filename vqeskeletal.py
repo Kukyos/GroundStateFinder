@@ -320,12 +320,13 @@ class HamiltonianPlugin:
     def __init__(self):
         # Default to a reasonable NH3 geometry (approximate, Angstroms)
         # If you want H2 instead, replace with ["H 0 0 0", "H 0 0 0.74"] or multiline string.
-        self.geom = [
-            "N 0.000000 0.000000 0.000000",
-            "H 0.000000 0.937700 -0.381600",
-            "H 0.812100 -0.468800 -0.381600",
-            "H -0.812100 -0.468800 -0.381600"
-        ]
+        #self.geom = [
+        #    "N 0.000000 0.000000 0.000000",
+        #    "H 0.000000 0.937700 -0.381600",
+        #    "H 0.812100 -0.468800 -0.381600",
+        #    "H -0.812100 -0.468800 -0.381600"
+        #]
+        self.geom = ["H 0 0 0", "H 0 0 0.74"]
         self._hamiltonian = None
         self._problem_active = None
         self._mapper = None
@@ -1634,4 +1635,5 @@ def test_corrected_vqe():
 
 if __name__ == "__main__":
     test_corrected_vqe()
+
 
