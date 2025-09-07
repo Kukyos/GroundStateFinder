@@ -1570,7 +1570,10 @@ class VQE:
             print(f"   Final energy: {current_energy:.10f} Hartree")
             if len(self.energy_history) >= 2:
                 print(f"   Total improvement: {self.energy_history[0] - current_energy:.6f} Hartree")
-            print(f"   Iterations (optimizer steps): {self.iteration_count}")
+            # Clarify: this is the number of objective function evaluations,
+            # not the number of optimizer iterations. For SPSA this is typically 1 + 3*k (+1 final),
+            # where k = max_iter, due to e+, e-, and current evaluations per step.
+            print(f"   Objective evaluations: {self.iteration_count}")
             print(f"   Effective circuit evaluations: {self.eval_calls}")
 
         return np.array(best_params, dtype=float), float(current_energy)
