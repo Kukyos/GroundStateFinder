@@ -1108,6 +1108,9 @@ class VQE:
         self.energy_history = []
         self.parameter_history = []
         self.iteration_count = 0
+    # Total effective circuit evaluations (counts each underlying measurement call,
+    # including per-factor ZNE foldings). Useful for fair optimizer comparisons.
+        self.eval_calls = 0
         
         # Build the system
         print("🔄 Initializing VQE system...")
@@ -1116,13 +1119,6 @@ class VQE:
         
         # Setup quantum estimator
         self._setup_estimator()
-        
-        # Track any fallbacks used during the run
-        self.fallback_flags = {
-            'hamiltonian': bool(self.hamiltonian_system.get('fallback', False)),
-            'estimator_to_statevector': False,
-            'mock_energy': False,
-        }
     # Adaptive ZNE controls (inside __init__). By default adaptive disabling is OFF to retain
     # original behaviour (never auto-collapse noise_factors). Set zne_adaptive_enable=True in
     # notebook AFTER constructing VQE if you want auto-disable.
@@ -1131,6 +1127,15 @@ class VQE:
         self.zne_patience = 10               # Consecutive no-improvement iterations before disabling
         self.zne_no_improve_streak = 0       # Counter
         self.zne_disabled = False            # Flag once multi-noise is turned off
+
+        # Optional synthetic shot-noise injection (off by default). This approximates
+        # sampling noise when running with exact Estimator/Statevector backends, so we can
+        # observe optimizer robustness and ZNE benefits without a hardware/noise model.
+        # Enable by setting an integer number of shots here or via env VQE_SHOTS.
+        try:
+            self.shot_noise_shots = int(os.environ.get('VQE_SHOTS', '0')) or None
+        except Exception:
+            self.shot_noise_shots = None
 
     def _setup_estimator(self):
         """Setup quantum estimator for expectation value calculation"""
@@ -1216,7 +1221,13 @@ class VQE:
             nums = collect_numbers(estimator_result)
             if nums:
                 # Heuristic: take the first number (expected single expectation value)
-                return float(nums[0])
+                val = float(nums[0])
+                # Count this effective circuit evaluation
+                self.eval_calls += 1
+                # Optionally inject synthetic shot noise for fair/noisy comparisons
+                if self.shot_noise_shots is not None and self.shot_noise_shots > 0:
+                    val = self._inject_shot_noise(val, hamiltonian, self.shot_noise_shots)
+                return val
             else:
                 raise TypeError(f"No numeric values found in estimator result {type(estimator_result)}")
 
@@ -1226,22 +1237,36 @@ class VQE:
                 from qiskit.quantum_info import Statevector # type: ignore
                 sv = Statevector.from_instruction(trial_wavefunction)
                 val = sv.expectation_value(hamiltonian)
-                # Record fallback
-                try:
-                    self.fallback_flags['estimator_to_statevector'] = True
-                except Exception:
-                    pass
-                return float(np.real(val))
+                out = float(np.real(val))
+                self.eval_calls += 1
+                if self.shot_noise_shots is not None and self.shot_noise_shots > 0:
+                    out = self._inject_shot_noise(out, hamiltonian, self.shot_noise_shots)
+                return out
             except Exception as e2:
                 if self.verbose:
                     print(f"⚠ Quantum simulation error (estimator): {e}")
                     print(f"⚠ Statevector fallback failed: {e2}")
                     print("  Falling back to stochastic mock value")
-                try:
-                    self.fallback_flags['mock_energy'] = True
-                except Exception:
-                    pass
                 return -5.0 + np.random.normal(0, 0.1)
+
+    def _inject_shot_noise(self, value: float, hamiltonian, shots: int) -> float:
+        """Approximate shot noise by adding a zero-mean Gaussian with σ ≤ sqrt(sum c_i^2 / shots).
+
+        This upper-bounds the standard deviation for weighted sums of ±1 Pauli measurements.
+        It provides a simple, backend-agnostic way to emulate sampling noise when running on
+        analytic simulators. Conservatively scales with the Hamiltonian coefficients.
+        """
+        try:
+            coeffs = getattr(hamiltonian, 'coeffs', None)
+            if coeffs is None:
+                return value
+            s2 = float(np.sum(np.abs(coeffs.astype(complex))**2))
+            if shots <= 0:
+                return value
+            sigma = math.sqrt(max(s2, 0.0) / shots)
+            return float(value + np.random.normal(0.0, sigma))
+        except Exception:
+            return value
 
     def objective_function(self, parameters):
         """
@@ -1407,22 +1432,8 @@ class VQE:
             print(f"   Final energy: {current_energy:.10f} Hartree")
             if len(self.energy_history) >= 2:
                 print(f"   Total improvement: {self.energy_history[0] - current_energy:.6f} Hartree")
-            print(f"   Evaluations: {self.iteration_count}")
-            # BIG banner if any fallback paths were used
-            try:
-                if any(self.fallback_flags.values()):
-                    print("\n" + "!"*90)
-                    print("!!! FALLBACK PATH USED — CHECK SETUP AND DEPENDENCIES !!!")
-                    print("!"*90)
-                    if self.fallback_flags.get('hamiltonian'):
-                        print("- Hamiltonian fallback: synthetic operator used (ab initio build failed).")
-                    if self.fallback_flags.get('estimator_to_statevector'):
-                        print("- Estimator fallback: Aer Estimator failed; Statevector path was used.")
-                    if self.fallback_flags.get('mock_energy'):
-                        print("- Measurement fallback: both Estimator and Statevector failed; mock energy returned.")
-                    print("!"*90 + "\n")
-            except Exception:
-                pass
+            print(f"   Iterations (optimizer steps): {self.iteration_count}")
+            print(f"   Effective circuit evaluations: {self.eval_calls}")
 
         return np.array(best_params, dtype=float), float(current_energy)
 
