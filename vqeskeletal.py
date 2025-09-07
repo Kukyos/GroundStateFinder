@@ -1221,6 +1221,11 @@ class VQE:
         
         # Setup quantum estimator
         self._setup_estimator()
+        # Extract constant (identity) energy shift from the Hamiltonian for clearer reporting
+        try:
+            self.energy_constant_shift = self._extract_identity_shift(self.hamiltonian_system['hamiltonian_active'])
+        except Exception:
+            self.energy_constant_shift = 0.0
     # Adaptive ZNE controls (inside __init__). By default adaptive disabling is OFF to retain
     # original behaviour (never auto-collapse noise_factors). Set zne_adaptive_enable=True in
     # notebook AFTER constructing VQE if you want auto-disable.
@@ -1238,6 +1243,30 @@ class VQE:
             self.shot_noise_shots = int(os.environ.get('VQE_SHOTS', '0')) or None
         except Exception:
             self.shot_noise_shots = None
+
+    def _extract_identity_shift(self, hamiltonian) -> float:
+        """Return the coefficient of the all-identity Pauli term (constant energy shift).
+
+        Many chemistry Hamiltonians include a large constant term (e.g., nuclear repulsion and
+        reference energy). This makes all energies appear offset by the same amount across
+        different ansatz/optimizer variants. Exposing it improves interpretability.
+        """
+        try:
+            num_q = int(getattr(hamiltonian, 'num_qubits', 0))
+            if num_q <= 0:
+                return 0.0
+            target = 'I' * num_q
+            # Iterate pauli terms; Qiskit PauliList items stringify to labels like 'IZZXI'
+            for p, c in zip(getattr(hamiltonian, 'paulis', []), getattr(hamiltonian, 'coeffs', [])):
+                try:
+                    if str(p) == target:
+                        # Real part should represent the constant shift in Hartree
+                        return float(np.real(c))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return 0.0
 
     def _setup_estimator(self):
         """Setup quantum estimator for expectation value calculation"""
@@ -1459,6 +1488,13 @@ class VQE:
         print(f"{'='*60}")
         print(f"📊 Energy = {energy:.8f} Hartree")
         print(f"📊 Energy = {energy * 627.509:.4f} kcal/mol")
+        # Also show energy with the constant identity shift removed for apples-to-apples comparison
+        try:
+            e_shift = getattr(self, 'energy_constant_shift', 0.0) or 0.0
+            shifted = float(energy - e_shift)
+            print(f"📊 Energy (minus constant shift {e_shift:.6f}) = {shifted:.8f} Hartree")
+        except Exception:
+            pass
         
         # Energy improvement tracking
         if len(self.energy_history) > 1:
