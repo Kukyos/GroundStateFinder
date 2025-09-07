@@ -207,6 +207,108 @@ class AnsatzPlugin:
         }
 
 
+class GenericAnsatzPlugin:
+    """
+    Hardware-efficient Ansatz (Ry + CX layers) compatible with VQE.
+
+    This mirrors the interface of `AnsatzPlugin` so it can be dropped into VQE
+    for a simple baseline that does not rely on UCCSD/HF structure.
+    """
+    def __init__(self, layers: int = 2, entanglement: str = "linear", verbose: bool = True):
+        self.layers = int(layers)
+        self.entanglement = entanglement
+        self.verbose = verbose
+        self.ansatz_circuit = None
+        self.num_parameters = 0
+        self.num_qubits = 0
+        self.is_built = False
+        self.vqe_ready = False
+
+    def build_from_hamiltonian(self, hamiltonian_system):
+        from qiskit.circuit import QuantumCircuit, Parameter  # type: ignore
+        num_qubits = int(hamiltonian_system.get('num_qubits', 0))
+        if num_qubits <= 0:
+            raise ValueError("Hamiltonian system missing a valid num_qubits")
+        self.num_qubits = num_qubits
+        qc = QuantumCircuit(self.num_qubits)
+        params = []
+        for l in range(self.layers):
+            # Single-qubit Ry rotations
+            for q in range(self.num_qubits):
+                p = Parameter(f"theta_{l}_{q}")
+                qc.ry(p, q)
+                params.append(p)
+            # Entanglement layer
+            if self.entanglement == "linear":
+                for q in range(self.num_qubits - 1):
+                    qc.cx(q, q + 1)
+            elif self.entanglement == "full":
+                for q in range(self.num_qubits):
+                    for r in range(q + 1, self.num_qubits):
+                        qc.cx(q, r)
+            else:
+                # default to linear if unknown
+                for q in range(self.num_qubits - 1):
+                    qc.cx(q, q + 1)
+        self.ansatz_circuit = qc
+        self.num_parameters = len(params)
+        self.is_built = True
+        self.vqe_ready = self.num_parameters > 0
+        if self.verbose:
+            print(f"✓ Generic ansatz built (layers={self.layers}, entanglement={self.entanglement}, params={self.num_parameters})")
+        return True
+
+    def get_trial_wavefunction(self, parameters):
+        if not self.is_built:
+            raise RuntimeError("Ansatz not built")
+        if self.num_parameters == 0:
+            return self.ansatz_circuit.copy()
+        if len(parameters) != self.num_parameters:
+            raise ValueError("Parameter length mismatch")
+        if hasattr(self.ansatz_circuit, 'bind_parameters'):
+            return self.ansatz_circuit.bind_parameters(parameters)
+        trial = self.ansatz_circuit.copy()
+        if getattr(trial, 'parameters', None):
+            trial = trial.assign_parameters(dict(zip(trial.parameters, parameters)))
+        return trial
+
+    def get_initial_parameters(self, init_type: str = "random_normal"):
+        import numpy as _np
+        if not self.is_built:
+            raise RuntimeError("Ansatz not built")
+        if self.num_parameters == 0:
+            return _np.array([])
+        if init_type == "zero":
+            return _np.zeros(self.num_parameters)
+        if init_type == "random_small":
+            return _np.random.normal(0, 0.01, self.num_parameters)
+        return _np.random.normal(0, 0.1, self.num_parameters)
+
+    def get_parameter_bounds(self, bound_type: str = "standard"):
+        import numpy as _np
+        if not self.is_built or self.num_parameters == 0:
+            return []
+        if bound_type == "tight":
+            return [(-0.1, 0.1)] * self.num_parameters
+        if bound_type == "loose":
+            return [(-2 * _np.pi, 2 * _np.pi)] * self.num_parameters
+        return [(-_np.pi, _np.pi)] * self.num_parameters
+
+    def get_ansatz_info(self):
+        if not self.is_built:
+            return {"built": False}
+        return {
+            'built': True,
+            'vqe_ready': self.vqe_ready,
+            'num_qubits': self.num_qubits,
+            'num_parameters': self.num_parameters,
+            'circuit_depth': self.ansatz_circuit.depth() if self.ansatz_circuit else 0,
+            'circuit_gates': len(self.ansatz_circuit.data) if self.ansatz_circuit else 0,
+            'layers': self.layers,
+            'entanglement': self.entanglement,
+        }
+
+
 class HamiltonianPlugin:
     """
     Plugin for generating the active-space Hamiltonian for Ammonia (NH3).
