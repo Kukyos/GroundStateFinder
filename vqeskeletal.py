@@ -1576,6 +1576,34 @@ class VQE:
         return np.array(best_params, dtype=float), float(current_energy)
 
 
+def exact_ground_state_energy(hamiltonian: SparsePauliOp) -> float:
+    """Compute the exact ground-state energy (lowest eigenvalue) of a qubit Hamiltonian.
+
+    For small active spaces (e.g., 6 qubits for NH3), we can directly diagonalize the
+    2^n x 2^n matrix to get the exact ground-state energy in Hartree.
+    """
+    import numpy as _np
+    try:
+        # Prefer dense matrix for small n
+        try:
+            mat = hamiltonian.to_matrix(sparse=False)
+        except TypeError:
+            mat = hamiltonian.to_matrix()
+        # Ensure complex ndarray
+        mat = _np.asarray(mat, dtype=_np.complex128)
+        vals = _np.linalg.eigvalsh(mat)
+        return float(_np.min(vals).real)
+    except Exception:
+        # Sparse fallback
+        try:
+            mat = hamiltonian.to_matrix(sparse=True)
+            from scipy.sparse.linalg import eigsh  # type: ignore
+            val, _ = eigsh(mat, k=1, which='SA')
+            return float(val[0].real)
+        except Exception as e2:
+            raise RuntimeError(f"Exact diagonalization failed: {e2}")
+
+
 # Test function
 def test_corrected_vqe():
     """Test the corrected VQE implementation"""
