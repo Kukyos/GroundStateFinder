@@ -325,6 +325,7 @@ class HamiltonianPlugin:
             "H 0.812100 -0.468800 -0.381600",
             "H -0.812100 -0.468800 -0.381600"
         ]
+        #self.geom = ["H 0 0 0", "H 0 0 0.74"]
         self._hamiltonian = None
         self._problem_active = None
         self._mapper = None
@@ -591,11 +592,6 @@ class HamiltonianPlugin:
         print('-------------------------------------\n')
 
 
-# Classical optimizer placeholder (keeping as requested)
-class ClassicalOptimizerPlugin:
-    """Plugin for the classical optimization routine."""
-    def optimize(self, objective_function, initial_params):
-        raise NotImplementedError("Optimizer plugin not implemented.")
 
 
 import numpy as np
@@ -1445,4 +1441,7 @@ class VQE:
 # (Removed) exact_ground_state_energy helper
 
 # (Removed: internal VQE test harness)
+
+
+
 
