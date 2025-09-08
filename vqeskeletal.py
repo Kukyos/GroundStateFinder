@@ -1,11 +1,10 @@
 import math
-import random
 import os
 import numpy as np
 
 # Imports for the Hamiltonian Plugin
-from qiskit.quantum_info import SparsePauliOp # type: ignore
-from qiskit import QuantumCircuit   # type: ignore
+from qiskit.quantum_info import SparsePauliOp  # type: ignore
+from qiskit import QuantumCircuit  # type: ignore
 
 # The following imports require qiskit-nature and a chemistry driver like pyscf
 try:
@@ -550,8 +549,7 @@ class HamiltonianPlugin:
         terms = {str(p): complex(c) for p, c in zip(ham_active.paulis, ham_active.coeffs) if abs(complex(c)) > 1e-12}
         physical_count = len(terms)
 
-        if self.PAD_SYNTHETIC and physical_count < self.MIN_TERMS:
-            self._add_synthetic_padding(terms, ham_active.num_qubits, physical_count)
+    # (Pruned) Synthetic padding disabled
 
         self._print_summary(terms, physical_count)
         
@@ -581,14 +579,7 @@ class HamiltonianPlugin:
             'geometry_lines': len(self.geom) if isinstance(self.geom, (list, tuple)) else 1
         }
 
-    def _add_synthetic_padding(self, terms, num_qubits, physical_count):
-        needed = self.MIN_TERMS - physical_count
-        alphabet = ['I', 'X', 'Y', 'Z']
-        for _ in range(needed * 20):
-            if len(terms) >= self.MIN_TERMS: break
-            word = ''.join(random.choice(alphabet) for _ in range(num_qubits))
-            if word == 'I' * num_qubits or word in terms: continue
-            terms[word] = (random.random() * 2 - 1) * self.SYN_COEFF_SCALE
+    # (Removed) _add_synthetic_padding helper
     
     def _print_summary(self, terms, physical_count):
         total = len(terms)
@@ -615,11 +606,7 @@ class ZNEDenoiserPlugin:
     """
     Advanced Zero-Noise Extrapolation (ZNE) Plugin for VQE Error Mitigation
     
-    Implements multiple ZNE strategies including:
-    - Richardson extrapolation
-    - Exponential fitting
-    - Polynomial fitting
-    - Adaptive noise scaling
+    Implements ZNE with Richardson (default) and linear fallbacks.
     """
 
     def __init__(self, 
@@ -729,10 +716,7 @@ class ZNEDenoiserPlugin:
         
         if self.extrapolation_method == 'richardson':
             return self._richardson_extrapolation(noise_factors, noisy_values)
-        elif self.extrapolation_method == 'exponential':
-            return self._exponential_extrapolation(noise_factors, noisy_values)
-        elif self.extrapolation_method == 'polynomial':
-            return self._polynomial_extrapolation(noise_factors, noisy_values)
+    # Keep only Richardson and linear; other methods removed
         elif self.extrapolation_method == 'linear':
             return self._linear_extrapolation(noise_factors, noisy_values)
         else:
@@ -770,46 +754,7 @@ class ZNEDenoiserPlugin:
         
         return np.average(extrapolated_values, weights=weights)
 
-    def _exponential_extrapolation(self, noise_factors: np.ndarray, values: np.ndarray) -> float:
-        """Exponential decay model: E(λ) = a + b*exp(-c*λ)"""
-        try:
-            # Fit exponential decay: E(λ) = a*exp(-b*λ) + c
-            from scipy.optimize import curve_fit
-            
-            def exp_model(x, a, b, c):
-                return a * np.exp(-b * x) + c
-            
-            # Initial guess
-            p0 = [values[0] - values[-1], 0.1, values[-1]]
-            
-            popt, _ = curve_fit(exp_model, noise_factors, values, p0=p0, maxfev=1000)
-            
-            # Extrapolate to λ = 0
-            return exp_model(0, *popt)
-            
-        except (ImportError, RuntimeError, ValueError):
-            # Fallback to simple exponential fit
-            try:
-                # Linear fit in log space: log(E) = log(a) + b*λ
-                log_values = np.log(np.abs(values) + 1e-12)  # Avoid log(0)
-                coeffs = np.polyfit(noise_factors, log_values, 1)
-                return np.exp(coeffs[1])  # exp(log(a)) = a
-            except:
-                # Final fallback to linear extrapolation
-                return self._linear_extrapolation(noise_factors, values)
-
-    def _polynomial_extrapolation(self, noise_factors: np.ndarray, values: np.ndarray) -> float:
-        """Polynomial extrapolation to λ = 0"""
-        degree = min(self.polynomial_degree, len(values) - 1)
-        
-        try:
-            # Fit polynomial
-            coeffs = np.polyfit(noise_factors, values, degree)
-            # Evaluate at λ = 0
-            return np.polyval(coeffs, 0)
-        except (np.linalg.LinAlgError, ValueError):
-            # Fallback to linear
-            return self._linear_extrapolation(noise_factors, values)
+    # (Removed) _exponential_extrapolation and _polynomial_extrapolation
 
     def _linear_extrapolation(self, noise_factors: np.ndarray, values: np.ndarray) -> float:
         """Simple linear extrapolation"""
@@ -927,88 +872,7 @@ class ZNEDenoiserPlugin:
 
 
 # Integration helper for VQE class
-class ZNEIntegratedMeasurement:
-    """
-    Helper class to integrate ZNE directly into VQE measurement process
-    """
-    
-    def __init__(self, vqe_instance, zne_plugin: ZNEDenoiserPlugin):
-        self.vqe = vqe_instance
-        self.zne_plugin = zne_plugin
-    
-    def measure_with_zne(self, parameters: np.ndarray) -> float:
-        """
-        Perform measurement with automatic ZNE error mitigation
-        
-        Args:
-            parameters: Variational parameters
-            
-        Returns:
-            Zero-noise extrapolated expectation value
-        """
-        # Get trial wavefunction
-        trial_wavefunction = self.vqe.ansatz_plugin.get_trial_wavefunction(parameters)
-        hamiltonian = self.vqe.hamiltonian_system['hamiltonian_active']
-        
-        # Measure at different noise levels
-        noisy_values = []
-        
-        for noise_factor in self.zne_plugin.noise_factors:
-            if noise_factor == 1.0:
-                # Original circuit
-                noisy_circuit = trial_wavefunction
-            else:
-                # Create noisier version
-                noisy_circuit = self.zne_plugin.create_noisy_circuit(trial_wavefunction, noise_factor)
-            
-            # Measure expectation value
-            expectation = self.vqe._simulate_measurement(noisy_circuit, hamiltonian)
-            noisy_values.append(expectation)
-        
-        # Apply ZNE
-        return self.zne_plugin.denoise(noisy_values)
-
-
-# Example usage and testing
-def test_zne_plugin():
-    """Test the ZNE plugin with synthetic noisy data"""
-    print("🧪 Testing ZNE Plugin")
-    print("="*50)
-    
-    # Create ZNE plugin
-    zne = ZNEDenoiserPlugin(
-        noise_factors=[1.0, 2.0, 3.0, 4.0],
-        extrapolation_method='richardson',
-        verbose=True
-    )
-    
-    # Simulate noisy measurements (true value = -1.8572)
-    true_value = -1.8572
-    noise_factors = [1.0, 2.0, 3.0, 4.0]
-    
-    # Simulate exponential decay with noise
-    noisy_values = []
-    for factor in noise_factors:
-        noise = 0.1 * (factor - 1.0)  # Noise increases with factor
-        measured = true_value + noise + 0.01 * np.random.randn()
-        noisy_values.append(measured)
-    
-    print(f"True value: {true_value}")
-    print(f"Noisy measurements: {noisy_values}")
-    
-    # Apply ZNE
-    denoised = zne.denoise(noisy_values)
-    
-    print(f"ZNE result: {denoised}")
-    print(f"Error reduction: {abs(noisy_values[0] - true_value):.6f} → {abs(denoised - true_value):.6f}")
-    
-    # Get analysis
-    analysis = zne.get_zne_analysis()
-    print(f"ZNE Analysis: {analysis}")
-
-
-if __name__ == "__main__":
-    test_zne_plugin()
+# (Removed: ZNEIntegratedMeasurement helper and test harness)
 
     
 
@@ -1199,36 +1063,35 @@ class VQE:
     """
     The main VQE class that orchestrates the algorithm using the provided plugins.
     """
-    def __init__(self, ansatz_plugin, hamiltonian_plugin, optimizer_plugin, zne_plugin, verbose=True):
+    def __init__(self, ansatz_plugin, hamiltonian_plugin, optimizer_plugin, zne_plugin, verbose=True, estimator=None):
         self.ansatz_plugin = ansatz_plugin
         self.hamiltonian_plugin = hamiltonian_plugin
         self.optimizer_plugin = optimizer_plugin
         self.zne_plugin = zne_plugin
         self.verbose = verbose
-        
         # Energy tracking for iteration output
         self.energy_history = []
         self.parameter_history = []
         self.iteration_count = 0
-    # Total effective circuit evaluations (counts each underlying measurement call,
-    # including per-factor ZNE foldings). Useful for fair optimizer comparisons.
+        # Total effective circuit evaluations (counts each underlying measurement call,
+        # including per-factor ZNE foldings). Useful for fair optimizer comparisons.
         self.eval_calls = 0
-        
         # Build the system
         print("🔄 Initializing VQE system...")
         self.hamiltonian_system = self.hamiltonian_plugin.get_hamiltonian()
         self.ansatz_plugin.build_from_hamiltonian(self.hamiltonian_system)
-        
         # Setup quantum estimator
-        self._setup_estimator()
+        self.estimator = estimator
+        if self.estimator is None:
+            self._setup_estimator()
         # Extract constant (identity) energy shift from the Hamiltonian for clearer reporting
         try:
             self.energy_constant_shift = self._extract_identity_shift(self.hamiltonian_system['hamiltonian_active'])
         except Exception:
             self.energy_constant_shift = 0.0
-    # Adaptive ZNE controls (inside __init__). By default adaptive disabling is OFF to retain
-    # original behaviour (never auto-collapse noise_factors). Set zne_adaptive_enable=True in
-    # notebook AFTER constructing VQE if you want auto-disable.
+        # Adaptive ZNE controls (inside __init__). By default adaptive disabling is OFF to retain
+        # original behaviour (never auto-collapse noise_factors). Set zne_adaptive_enable=True in
+        # notebook AFTER constructing VQE if you want auto-disable.
         self.zne_adaptive_enable = False     # Master switch
         self.zne_improvement_tol = 1e-4      # Hartree threshold considered "no improvement"
         self.zne_patience = 10               # Consecutive no-improvement iterations before disabling
@@ -1579,59 +1442,7 @@ class VQE:
         return np.array(best_params, dtype=float), float(current_energy)
 
 
-def exact_ground_state_energy(hamiltonian: SparsePauliOp) -> float:
-    """Compute the exact ground-state energy (lowest eigenvalue) of a qubit Hamiltonian.
+# (Removed) exact_ground_state_energy helper
 
-    For small active spaces (e.g., 6 qubits for NH3), we can directly diagonalize the
-    2^n x 2^n matrix to get the exact ground-state energy in Hartree.
-    """
-    import numpy as _np
-    try:
-        # Prefer dense matrix for small n
-        try:
-            mat = hamiltonian.to_matrix(sparse=False)
-        except TypeError:
-            mat = hamiltonian.to_matrix()
-        # Ensure complex ndarray
-        mat = _np.asarray(mat, dtype=_np.complex128)
-        vals = _np.linalg.eigvalsh(mat)
-        return float(_np.min(vals).real)
-    except Exception:
-        # Sparse fallback
-        try:
-            mat = hamiltonian.to_matrix(sparse=True)
-            from scipy.sparse.linalg import eigsh  # type: ignore
-            val, _ = eigsh(mat, k=1, which='SA')
-            return float(val[0].real)
-        except Exception as e2:
-            raise RuntimeError(f"Exact diagonalization failed: {e2}")
-
-
-# Test function
-def test_corrected_vqe():
-    """Test the corrected VQE implementation"""
-    print("🧪 Testing Corrected VQE Implementation")
-    print("="*80)
-    
-    # Initialize plugins
-    hamiltonian_plugin = HamiltonianPlugin()
-    ansatz_plugin = AnsatzPlugin(verbose=True)
-    # Use hybrid optimizer by default for test
-    optimizer_plugin = HybridSPSAThenCOBYLA(spsa_iters=15, switch_tol=5e-3, min_spsa=8, force_cobyla=True, verbose=True)
-    zne_plugin = ZNEDenoiserPlugin()
-    
-    # Create and run VQE
-    vqe = VQE(ansatz_plugin, hamiltonian_plugin, optimizer_plugin, zne_plugin)
-    
-    # Run optimization
-    result = vqe.run()
-    
-    if result[0] is not None:
-        print(f"\n🎊 TEST SUCCESSFUL!")
-        print(f"   Final energy: {result[1]:.6f} Hartree")
-    else:
-        print(f"\n❌ TEST FAILED")
-
-if __name__ == "__main__":
-    test_corrected_vqe()
+# (Removed: internal VQE test harness)
 
