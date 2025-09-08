@@ -1,0 +1,299 @@
+# --- Gradio UI for VQE Workflow in Colab ---
+# Install required packages (if not already installed)
+try:
+    import gradio as gr
+except ImportError:
+    !pip install gradio --quiet
+    import gradio as gr
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    !pip install matplotlib --quiet
+    import matplotlib.pyplot as plt
+
+try:
+    import plotly.graph_objs as go
+except ImportError:
+    !pip install plotly --quiet
+    import plotly.graph_objs as go
+
+try:
+    from qiskit import QuantumCircuit
+except ImportError:
+    !pip install qiskit --quiet
+    from qiskit import QuantumCircuit
+
+import numpy as np
+import io
+import time
+import threading
+
+# --- Helper Functions ---
+def get_energy_history(vqe_obj):
+    """Extract energy history from VQE object."""
+    if hasattr(vqe_obj, 'energy_history'):
+        return np.array(vqe_obj.energy_history)
+    return np.array([])
+
+def plot_energy_reduction(energy_history, title="Energy Reduction"):
+    """Plot energy reduction over iterations using Matplotlib."""
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(np.arange(1, len(energy_history)+1), energy_history, marker='o', color='blue')
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Energy (Hartree)")
+    ax.set_title(title)
+    ax.grid(True)
+    fig.tight_layout()
+    return fig
+
+def live_plot_energy_reduction(energy_history, title="Energy Reduction"):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Energy (Hartree)")
+    ax.set_title(title)
+    ax.grid(True)
+    fig.tight_layout()
+    for i in range(1, len(energy_history)+1):
+        ax.clear()
+        ax.plot(np.arange(1, i+1), energy_history[:i], marker='o', color='blue')
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Energy (Hartree)")
+        ax.set_title(title)
+        ax.grid(True)
+        fig.tight_layout()
+        yield fig
+        time.sleep(0.15)
+
+def plot_comparison(energies, labels, title="VQE Variant Comparison"):
+    """Plot comparison of final energies for different VQE variants."""
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=labels, y=energies, marker_color='indigo'))
+    fig.update_layout(title=title, xaxis_title="Variant", yaxis_title="Final Energy (Hartree)", font_family="monospace")
+    return fig
+
+def live_text_reveal(text, delay=0.08):
+    lines = text.split('\n')
+    out = ""
+    for line in lines:
+        out += line + "\n"
+        yield out
+        time.sleep(delay)
+
+def plot_all_histories(histories, labels, title):
+    """Plot multiple energy histories for comparison with improved clarity."""
+    fig, ax = plt.subplots(figsize=(12, 7))  # Larger figure for visibility
+    colors = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6"]
+    markers = ['o', 's', '^', 'D', 'P', 'X', '*', 'v']
+    for i, (hist, label) in enumerate(zip(histories, labels)):
+        if len(hist) > 0:
+            ax.plot(np.arange(1, len(hist)+1), hist, marker=markers[i % len(markers)], color=colors[i % len(colors)], label=label, linewidth=2, markersize=8)
+    ax.set_xlabel("Iteration", fontsize=14)
+    ax.set_ylabel("Energy (Hartree)", fontsize=14)
+    ax.set_title(title, fontsize=16, fontweight='bold')
+    ax.grid(True, which='both', linestyle='--', alpha=0.7)
+    ax.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize=13)  # Move legend outside plot
+    fig.tight_layout(rect=[0, 0, 0.85, 1])  # Make room for legend
+    return fig
+
+def live_plot_all_histories(histories, labels, title):
+    fig, ax = plt.subplots(figsize=(12, 7))
+    colors = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6"]
+    markers = ['o', 's', '^', 'D', 'P', 'X', '*', 'v']
+    ax.set_xlabel("Iteration", fontsize=14)
+    ax.set_ylabel("Energy (Hartree)", fontsize=14)
+    ax.set_title(title, fontsize=16, fontweight='bold')
+    ax.grid(True, which='both', linestyle='--', alpha=0.7)
+    fig.tight_layout(rect=[0, 0, 0.85, 1])
+    max_len = max(len(hist) for hist in histories)
+    for step in range(1, max_len+1):
+        ax.clear()
+        for i, (hist, label) in enumerate(zip(histories, labels)):
+            if len(hist) >= step:
+                ax.plot(np.arange(1, step+1), hist[:step], marker=markers[i % len(markers)], color=colors[i % len(colors)], label=label, linewidth=2, markersize=8)
+            else:
+                ax.plot(np.arange(1, len(hist)+1), hist, marker=markers[i % len(markers)], color=colors[i % len(colors)], label=label, linewidth=2, markersize=8)
+        ax.set_xlabel("Iteration", fontsize=14)
+        ax.set_ylabel("Energy (Hartree)", fontsize=14)
+        ax.set_title(title, fontsize=16, fontweight='bold')
+        ax.grid(True, which='both', linestyle='--', alpha=0.7)
+        ax.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize=13)
+        fig.tight_layout(rect=[0, 0, 0.85, 1])
+        yield fig
+        time.sleep(0.15)
+
+def get_hamiltonian_terms(ham_system, n_terms=10):
+    """Return first n terms of the Hamiltonian as a formatted string."""
+    qubit_op = ham_system['hamiltonian_active']
+    labels = qubit_op.paulis.to_labels()
+    coeffs = qubit_op.coeffs
+    terms = [
+        f"{coeff.real:+.8f} * {lbl}"
+        for lbl, coeff in zip(labels, coeffs)
+        if abs(complex(coeff)) > 1e-12
+    ]
+    return "\n".join(terms[:n_terms])
+
+def get_ansatz_circuit(ansatz):
+    """Visualize ansatz_circuit: mpl drawer if possible, else text drawer as image."""
+    circ = getattr(ansatz, 'ansatz_circuit', None)
+    if circ is None or not isinstance(circ, QuantumCircuit):
+        return "Error: ansatz_circuit not found or not a QuantumCircuit object."
+    try:
+        fig = circ.draw(output='mpl', style={'fontsize': 10, 'font': 'monospace'})
+        plt.close(fig)
+        return fig
+    except Exception as e:
+        # Fallback: text drawer as image
+        text = circ.draw(output='text')
+        fig = plt.figure(figsize=(12, 4))
+        plt.axis('off')
+        plt.text(0.01, 0.5, str(text), fontsize=10, fontfamily='monospace', va='center', ha='left')
+        plt.tight_layout()
+        plt.close(fig)
+        return fig
+
+def get_summary_table(summary_rows):
+    """Format summary table as markdown."""
+    header = "| Variant | Final Energy (Ha) | Best (Ha) | Δ (Ha) | Iters | Params |\n|---|---|---|---|---|---|"
+    rows = []
+    for row in summary_rows:
+        dE = row['improvement']
+        rows.append(f"| {row['variant']} | {row['final_energy']:.8f} | {row['best_energy']:.8f} | {dE:.6f} | {row['iterations']} | {row['parameters']} |")
+    return header + "\n" + "\n".join(rows)
+
+# --- Load objects from Colab session ---
+# These should be available if you have run the notebook cells.
+# If not, you can run the notebook cells first.
+
+# --- Gradio UI ---
+PIXEL_FONT_URL = "https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
+pixel_font_css = (
+    "@import url('" + PIXEL_FONT_URL + "');\n"
+    ".gradio-container, .gradio-markdown, .gradio-input, .gradio-output, .gradio-button, .gradio-label, .gradio-plot, .gradio-textbox, .gradio-tab, .gradio-radio, .gradio-checkbox, .gradio-dropdown, .gradio-table, .gradio-html, .gradio-markdown h1, .gradio-markdown h2, .gradio-markdown h3, .gradio-markdown h4, .gradio-markdown h5, .gradio-markdown h6 {\n"
+    "    font-family: 'Press Start 2P', 'monospace', 'Menlo', 'Roboto Mono', monospace !important;\n"
+    "    letter-spacing: 1px;\n"
+    "    font-size: 13px !important;\n"
+    "}\n"
+    ".gradio-button {\n"
+    "    font-size: 13px !important;\n"
+    "    padding: 8px 18px !important;\n"
+    "    border-radius: 6px !important;\n"
+    "    background: #222 !important;\n"
+    "    color: #fff !important;\n"
+    "    border: 2px solid #888 !important;\n"
+    "    box-shadow: 2px 2px 0 #888;\n"
+    "}\n"
+    "footer {visibility: hidden;}\n"
+    )
+
+with gr.Blocks(theme="soft", css=pixel_font_css) as demo:
+    gr.Markdown("# NEBULA : Enhanced VQE: Hybrid Initialization, Adaptive Optimization & Noise Mitigation")
+    
+
+    with gr.Tab("Basic VQE"):
+        btn_basic = gr.Button("Show Basic VQE Results")
+        gr.Markdown("### Energy Reduction Step-by-Step")
+        energy_plot = gr.Plot(label="Energy Reduction Graph")
+        final_energy = gr.Textbox(label="Final Computed Energy", interactive=False)
+
+        def show_basic_vqe():
+            energy_hist = get_energy_history(globals().get('vqe_basic'))
+            if len(energy_hist) == 0:
+                yield None, "N/A"
+                return
+            for fig in live_plot_energy_reduction(energy_hist, "Basic VQE Energy Reduction"):
+                yield fig, ""
+            yield fig, str(energy_hist[-1])
+        btn_basic.click(show_basic_vqe, outputs=[energy_plot, final_energy])
+
+    with gr.Tab("Hamiltonian Operator"):
+        btn_ham = gr.Button("Show Hamiltonian Terms")
+        gr.Markdown("### First 10 Terms of Hamiltonian")
+        hamiltonian_terms = gr.Textbox(label="Hamiltonian Terms", lines=12, interactive=False)
+
+        def show_hamiltonian():
+            ham = globals().get('ham_system')
+            if ham:
+                terms = get_hamiltonian_terms(ham, 10)
+            else:
+                terms = "Hamiltonian not found. Run Cell 2 in notebook."
+            for partial in live_text_reveal(terms):
+                yield partial
+        btn_ham.click(show_hamiltonian, outputs=hamiltonian_terms)
+
+    with gr.Tab("UCCSD Ansatz Circuit"):
+        btn_circuit = gr.Button("Show UCCSD Circuit")
+        gr.Markdown("### UCCSD Ansatz Circuit Visualization")
+        circuit_plot = gr.Plot(label="UCCSD Circuit")
+
+        def show_circuit():
+            ansatz = globals().get('uccsd_ansatz')
+            if ansatz:
+                fig = get_ansatz_circuit(ansatz)
+                yield fig
+            else:
+                yield "Ansatz not found. Run Cell 3 in notebook."
+        btn_circuit.click(show_circuit, outputs=circuit_plot)
+
+    with gr.Tab("Optimizer Experiments"):
+        btn_all = gr.Button("Show All Comparison Graphs")
+        gr.Markdown("### Compare Optimizer Variants (5 Graphs)")
+        graph1 = gr.Plot(label="Baseline HF Energy ")
+        graph2 = gr.Plot(label="CoordinateDescent Energy ")
+        graph3 = gr.Plot(label="Basic (SPSA) Energy ")
+        graph4 = gr.Plot(label="Hybrid (SPSA->COBYLA) Energy ")
+        graph5 = gr.Plot(label="Hybrid+ZNE Energy ")
+        all_graph = gr.Plot(label="All Variants Comparison")
+
+        def show_all_graphs():
+            variants = [
+                ('Baseline HF', 'baseline_obj'),
+                ('CoordinateDescent', 'vqe_cd'),
+                ('Basic (SPSA)', 'vqe_basic'),
+                ('Hybrid (SPSA->COBYLA)', 'vqe_hybrid'),
+                ('Hybrid+ZNE', 'vqe_hybrid_zne')
+            ]
+            histories = []
+            figs = []
+            # Show all 5 graphs as static images first
+            for label, obj_name in variants:
+                obj = globals().get(obj_name)
+                hist = get_energy_history(obj) if obj else np.array([])
+                histories.append(hist)
+                figs.append(plot_energy_reduction(hist, f"{label} Energy "))
+            yield figs[0], figs[1], figs[2], figs[3], figs[4], None
+            # Animate all variants comparison
+            for all_fig in live_plot_all_histories(histories, [v[0] for v in variants], "All VQE Variants Energy Comparison"):
+                yield figs[0], figs[1], figs[2], figs[3], figs[4], all_fig
+            # Final output
+            all_fig = plot_all_histories(histories, [v[0] for v in variants], "All VQE Variants Energy Comparison")
+            yield figs[0], figs[1], figs[2], figs[3], figs[4], all_fig
+        btn_all.click(show_all_graphs, outputs=[graph1, graph2, graph3, graph4, graph5, all_graph])
+
+    with gr.Tab("Summary Cell"):
+        btn_summary = gr.Button("Show Summary Table")
+        gr.Markdown("### VQE Results Summary Table")
+        summary_md = gr.Markdown()
+
+        def show_summary():
+            rows = globals().get('summary_rows', [])
+            if rows:
+                table = get_summary_table(rows)
+            else:
+                table = "No summary available. Run summary cell in notebook."
+            for partial in live_text_reveal(table):
+                yield partial
+        btn_summary.click(show_summary, outputs=summary_md)
+
+    with gr.Tab("Extras"):
+        btn_notes = gr.Button("Save Note")
+        gr.Markdown("### Add Notes or Observations")
+        notes = gr.Textbox(label="Your Notes", lines=6, interactive=True)
+        notes_display = gr.Markdown()
+
+        def save_note(note):
+            return f"**Your Note:**\n\n{note}"
+        btn_notes.click(save_note, inputs=notes, outputs=notes_display)
+
+demo.launch()
