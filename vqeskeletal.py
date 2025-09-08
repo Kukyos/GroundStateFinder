@@ -601,11 +601,6 @@ class HamiltonianPlugin:
         print('-------------------------------------\n')
 
 
-# Classical optimizer placeholder (keeping as requested)
-class ClassicalOptimizerPlugin:
-    """Plugin for the classical optimization routine."""
-    def optimize(self, objective_function, initial_params):
-        raise NotImplementedError("Optimizer plugin not implemented.")
 
 
 import numpy as np
@@ -1635,6 +1630,7 @@ def test_corrected_vqe():
 
 if __name__ == "__main__":
     test_corrected_vqe()
+
 
 
 
