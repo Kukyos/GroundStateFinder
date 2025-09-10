@@ -598,6 +598,16 @@ import numpy as np
 from typing import List, Union, Callable, Optional
 import warnings
 
+# Base optimizer plugin (added to ensure subclasses compile)
+class ClassicalOptimizerPlugin:
+    """Base class for classical optimizers used by VQE.
+
+    Subclasses must implement optimize(objective_function, initial_params)
+    and return the optimized parameter vector as a NumPy array or list.
+    """
+    def optimize(self, objective_function, initial_params):
+        raise NotImplementedError("Optimizers must implement optimize(objective_function, initial_params).")
+
 class ZNEDenoiserPlugin:
     """
     Advanced Zero-Noise Extrapolation (ZNE) Plugin for VQE Error Mitigation
@@ -1007,50 +1017,125 @@ class HybridSPSAThenCOBYLA(ClassicalOptimizerPlugin):
     def optimize(self, objective_function, initial_params):
         if self.verbose:
             print(f"[Hybrid] Starting SPSA (max_iter={self.spsa_iters}) -> COBYLA (switch_tol={self.switch_tol})")
-        # Wrap objective to record energies
+        # Prepare logging and status
         energy_log = []
+        self.last_switch_info = {
+            'switched': False,
+            'switch_iteration': None,
+            'reason': None,
+            'metrics': {},
+            'spsa_iters_ran': 0
+        }
+
         def logging_objective(p):
             val = objective_function(p)
             energy_log.append(val)
             return val
-        # Run SPSA
-        params_after_spsa = self._spsa.optimize(logging_objective, initial_params)
-        # Decide on switch
-        do_cobyla = self.force_cobyla
-        recent_impr = float('inf')
-        ma_impr = float('inf')
-        rel_ma = float('inf')
-        plateau = False
-        if len(energy_log) >= 2:
+
+        # Incremental SPSA with early stability-triggered switch
+        params = np.array(initial_params, dtype=float)
+        prev_val = logging_objective(params)
+        best_val = prev_val
+        best_params = params.copy()
+        switched_early = False
+
+        for k in range(1, self.spsa_iters + 1):
+            ak = self._spsa._ak(k)
+            ck = self._spsa._ck(k)
+            delta = self._spsa.rng.choice([-1, 1], size=params.shape)
+            plus = params + ck * delta
+            minus = params - ck * delta
+            e_plus = logging_objective(plus)
+            e_minus = logging_objective(minus)
+            gk = (e_plus - e_minus) / (2.0 * ck) * delta
+            params = params - ak * gk
+            curr_val = logging_objective(params)
+            if curr_val < best_val:
+                best_val = curr_val
+                best_params = params.copy()
+
+            # Stability metrics
             improvements = [abs(energy_log[i-1] - energy_log[i]) for i in range(1, len(energy_log))]
-            recent_impr = improvements[-1]
+            recent_impr = improvements[-1] if improvements else float('inf')
             window = improvements[-self.ma_window:]
-            if window:
-                ma_impr = sum(window) / len(window)
-            if abs(energy_log[-1]) > 1e-12:
-                rel_ma = ma_impr / abs(energy_log[-1])
-            # Plateau: last plateau_iters improvements all below switch_tol
-            if len(improvements) >= self.plateau_iters:
-                plateau = all(imp < self.switch_tol for imp in improvements[-self.plateau_iters:])
-            if not do_cobyla:
-                if len(energy_log) >= self.min_spsa:
-                    # Switch if moving-average AND relative thresholds met OR plateau
-                    if (ma_impr < self.switch_tol and rel_ma < self.rel_switch_frac) or plateau:
-                        do_cobyla = True
+            ma_impr = (sum(window) / len(window)) if window else float('inf')
+            rel_ma = (ma_impr / abs(energy_log[-1])) if (energy_log and abs(energy_log[-1]) > 1e-12) else float('inf')
+            plateau = len(improvements) >= self.plateau_iters and all(imp < self.switch_tol for imp in improvements[-self.plateau_iters:])
+
+            # Decide early switch
+            if (not self.force_cobyla) and (k >= self.min_spsa):
+                if (ma_impr < self.switch_tol and rel_ma < self.rel_switch_frac) or plateau:
+                    switched_early = True
+                    self.last_switch_info.update({
+                        'switched': True,
+                        'switch_iteration': k,
+                        'reason': 'stable_ma_rel' if (ma_impr < self.switch_tol and rel_ma < self.rel_switch_frac) else 'plateau',
+                        'metrics': {
+                            'recent_improvement': recent_impr,
+                            'ma_improvement': ma_impr,
+                            'rel_ma': rel_ma,
+                            'plateau': plateau,
+                            'switch_tol': self.switch_tol,
+                            'rel_switch_frac': self.rel_switch_frac,
+                            'ma_window': self.ma_window,
+                            'plateau_iters': self.plateau_iters
+                        },
+                        'spsa_iters_ran': k
+                    })
+                    if self.verbose:
+                        print(f"[Hybrid] Early stability detected at iter {k}: reason={self.last_switch_info['reason']} (ma={ma_impr:.3e}, rel_ma={rel_ma:.3e}, plateau={plateau})")
+                    break
+
+            # Optional SPSA convergence by its own tol
+            if abs(prev_val - curr_val) < (self.switch_tol / 5):
+                # Continue; final decision after loop
+                pass
+            prev_val = curr_val
+
+        self.last_switch_info['spsa_iters_ran'] = self.last_switch_info.get('spsa_iters_ran') or self.spsa_iters if not switched_early else self.last_switch_info['spsa_iters_ran']
+
+        # Decide if COBYLA should run
+        do_cobyla = self.force_cobyla or switched_early
+        if not do_cobyla and len(energy_log) >= 2 and self.min_spsa <= self.spsa_iters:
+            # Post-SPSA decision using stability metrics if not already switched
+            improvements = [abs(energy_log[i-1] - energy_log[i]) for i in range(1, len(energy_log))]
+            recent_impr = improvements[-1] if improvements else float('inf')
+            window = improvements[-self.ma_window:]
+            ma_impr = (sum(window) / len(window)) if window else float('inf')
+            rel_ma = (ma_impr / abs(energy_log[-1])) if (energy_log and abs(energy_log[-1]) > 1e-12) else float('inf')
+            plateau = len(improvements) >= self.plateau_iters and all(imp < self.switch_tol for imp in improvements[-self.plateau_iters:])
+            if (ma_impr < self.switch_tol and rel_ma < self.rel_switch_frac) or plateau:
+                do_cobyla = True
+                self.last_switch_info.update({
+                    'switched': True,
+                    'switch_iteration': self.spsa_iters,
+                    'reason': 'stable_ma_rel' if (ma_impr < self.switch_tol and rel_ma < self.rel_switch_frac) else 'plateau',
+                    'metrics': {
+                        'recent_improvement': recent_impr,
+                        'ma_improvement': ma_impr,
+                        'rel_ma': rel_ma,
+                        'plateau': plateau,
+                        'switch_tol': self.switch_tol,
+                        'rel_switch_frac': self.rel_switch_frac,
+                        'ma_window': self.ma_window,
+                        'plateau_iters': self.plateau_iters
+                    },
+                    'spsa_iters_ran': self.spsa_iters
+                })
+
         if self.verbose and len(energy_log) >= 2:
-            print(f"[Hybrid] Decision metrics: last={recent_impr:.3e} ma={ma_impr:.3e} rel_ma={rel_ma:.3e} plateau={plateau}")
+            mi = self.last_switch_info.get('metrics', {})
+            print(f"[Hybrid] Decision metrics: last={mi.get('recent_improvement', float('nan')):.3e} ma={mi.get('ma_improvement', float('nan')):.3e} rel_ma={mi.get('rel_ma', float('nan')):.3e} plateau={mi.get('plateau', False)}")
         if self.verbose:
-            if do_cobyla and len(energy_log) >= 2:
-                try:
-                    print("[Hybrid] Switching to COBYLA in 5 seconds...")
-                    import time; time.sleep(5)
-                except Exception:
-                    print("[Hybrid] (Sleep skipped)")
-            elif not do_cobyla and len(energy_log) >= 2:
-                print("[Hybrid] Staying with SPSA result (criteria not met for fine-tune).")
-        params_final = self._cobyla.optimize(logging_objective, params_after_spsa) if do_cobyla else params_after_spsa
+            if do_cobyla:
+                print("[Hybrid] Activating COBYLA fine-tuning.")
+            else:
+                print("[Hybrid] Staying with SPSA result (no stability trigger).")
+
+        params_start = best_params if do_cobyla else params
+        params_final = self._cobyla.optimize(logging_objective, params_start) if do_cobyla else params_start
         if self.verbose:
-            print(f"[Hybrid] Completed. Total energy evaluations: {len(energy_log)}")
+            print(f"[Hybrid] Completed. Total energy evaluations logged: {len(energy_log)}")
         return params_final
 
 
@@ -1402,6 +1487,12 @@ class VQE:
                     f"Initial parameter length {len(initial_params)} does not match ansatz parameter count {self.ansatz_plugin.num_parameters}."
                 )
 
+        # Expose for external reporting
+        try:
+            self.initial_params = np.array(initial_params, dtype=float)
+        except Exception:
+            self.initial_params = initial_params
+
         if self.verbose:
             print("\n🚀 Starting VQE optimization run")
             print(f"   Parameter count: {len(initial_params)}")
@@ -1416,6 +1507,12 @@ class VQE:
 
         # Run optimizer
         best_params = self.optimizer_plugin.optimize(self.objective_function, initial_params)
+
+        # Capture optimizer switch info if provided (e.g., Hybrid optimizer)
+        try:
+            self.switch_info = getattr(self.optimizer_plugin, 'last_switch_info', None)
+        except Exception:
+            self.switch_info = None
 
         # Ensure we have energy for returned params (optimizer may store best earlier)
         try:
@@ -1434,6 +1531,12 @@ class VQE:
             # where k = max_iter, due to e+, e-, and current evaluations per step.
             print(f"   Objective evaluations: {self.iteration_count}")
             print(f"   Effective circuit evaluations: {self.eval_calls}")
+
+        # Expose final params for external reporting
+        try:
+            self.final_params = np.array(best_params, dtype=float)
+        except Exception:
+            self.final_params = best_params
 
         return np.array(best_params, dtype=float), float(current_energy)
 
