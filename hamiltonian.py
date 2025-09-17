@@ -1,3 +1,29 @@
+#Google colab pip install commands
+
+!pip install qiskit==0.45.0
+!pip install qiskit-nature==0.7.0
+
+# Install PySCF for quantum chemistry calculations
+!pip install pyscf
+
+# Install additional dependencies that might be needed
+!pip install numpy scipy h5py
+
+# Install openfermion and openfermionpyscf (sometimes needed)
+!pip install openfermion openfermionpyscf
+
+# Optional: Install visualization tools for molecules
+!pip install matplotlib py3Dmol
+
+# Check installations
+!pip list | grep qiskit
+
+# Restart runtime after installation (run this in a separate cell)
+import os
+os.kill(os.getpid(), 9)
+
+
+
 from qiskit_nature.second_q.drivers import PySCFDriver
 from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
 from qiskit_nature.second_q.mappers import JordanWignerMapper
