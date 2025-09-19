@@ -1,6 +1,0 @@
-qiskit==2.1.2
-qiskit-nature==0.7.2
-pyscf==2.6.1
-numpy>=1.24,<2.0
-h5py
-pytest
