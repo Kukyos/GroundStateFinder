@@ -1,8 +1,3 @@
-import os
-os.kill(os.getpid(), 9)
-
-###############################################################################################################################################
-
 from qiskit_nature.second_q.drivers import PySCFDriver
 from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
 from qiskit_nature.second_q.mappers import JordanWignerMapper
@@ -161,17 +156,7 @@ class HamiltonianPlugin:
 # Test the updated code
 plugin = HamiltonianPlugin(auto_active=True, active_electrons=4, active_orbitals=3)
 
-# Get geometry input from user
-print("Enter molecular geometry (one atom per line, format: 'Element x y z')")
-print("Type 'done' when finished:")
-geometry = []
-while True:
-    line = input().strip()
-    if line.lower() == 'done':
-        break
-    geometry.append(line)
 
-plugin.geom = geometry
 
 # Get the hamiltonian system dictionary (compatible with ansatz)
 hamiltonian_system = plugin.get_hamiltonian()
