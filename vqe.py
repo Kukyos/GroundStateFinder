@@ -4,10 +4,6 @@ import numpy as np
 from typing import Optional, Tuple, Dict, Any, List
 import warnings
 warnings.filterwarnings('ignore')
-from hamiltonian import HamiltonianPlugin
-from ansatz import *
-from optimizer import *
-from denoiser import *
 
 
 class VQE:
@@ -69,6 +65,9 @@ class VQE:
         self.zne_patience = 10
         self.zne_no_improvement_count = 0
         self.zne_disabled = False
+        
+        # Initialize estimator attribute BEFORE system initialization
+        self.estimator = estimator
         
         # Initialize system
         self._initialize_system()
@@ -133,16 +132,21 @@ class VQE:
         
         for setup_func, name in estimator_attempts:
             try:
-                self.estimator = setup_func()
-                if self.verbose:
-                    print(f"   Successfully initialized: {name}")
-                return
+                est = setup_func()
+                if est is not None:
+                    self.estimator = est
+                    if self.verbose:
+                        print(f"   Successfully initialized: {name}")
+                    return
             except Exception as e:
                 if self.verbose:
-                    print(f"   {name} failed: {e}")
+                    print(f"   {name} not available: {e}")
                 continue
         
-        raise RuntimeError("No compatible quantum estimator found")
+        # If all fail, set a None estimator and handle in _simulate_measurement
+        self.estimator = None
+        if self.verbose:
+            print("   Warning: No estimator available, will use fallback methods")
     
     def _try_aer_estimator(self):
         """Try to setup Qiskit Aer estimator."""
