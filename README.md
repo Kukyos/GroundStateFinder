@@ -1,3 +1,5 @@
+![GroundStateFinder Logo](https://drive.google.com/uc?export=view&id=1o2tsKw-YFLjqaAh-eOugBpc_auPPOznC)
+
 ## GroundStateFinder – Small Molecule Qubit Hamiltonians (H2, NH3 Active Space)
 
 Generates Jordan–Wigner qubit Hamiltonians for:
